@@ -33,12 +33,41 @@ function clearSegmentProgress(novelId) {
 
 /**
  * 按名字匹配已有角色（功能 2：LLM 分段只复用已有角色，不创建/不覆盖）
+ * 容错策略（按优先级）：
+ *   1. 精确匹配（trim 后）
+ *   2. 去掉尾部说话动词后缀（道/说/问/笑道/说道...）后精确匹配
+ *   3. 前缀包含匹配（角色名 >= 2 字，LLM 名以角色名开头或反之）
  * 找不到返回 null（段落显示 ⚠ 未绑定，用户手动选）
  */
+const SPEECH_SUFFIX_RE = /(?:微笑着|轻声|低声|高声|大声|冷冷|淡淡|缓缓|微微|轻轻|笑了笑|想了想|顿了顿|继续道|接着道|补充道|说道|喝道|喊道|怒道|冷哼|轻哼|笑骂|打趣|反驳|附和|解释|询问|回答|嗤笑|讥讽|嘲笑|调侃|嘀咕|嘟囔|沉声|冷声|轻笑|大笑|冷笑|笑道|问道|答道|叫道|吼道|叹道|哭道|道|说|问|答|喊|叫|吼|喝|笑|叹)+$/;
 function matchCharacterId(name, characters) {
   if (!name) return null;
-  const c = (characters || []).find((x) => x.name === name);
-  return c ? c.id : null;
+  const list = characters || [];
+  const norm = (s) => (s || '').trim();
+  const target = norm(name);
+  if (!target) return null;
+
+  // 1. 精确匹配
+  let c = list.find((x) => norm(x.name) === target);
+  if (c) return c.id;
+
+  // 2. 去掉尾部说话动词后缀再精确匹配（cleaned 长度 >= 2，防"道"→""）
+  const cleaned = target.replace(SPEECH_SUFFIX_RE, '');
+  if (cleaned && cleaned !== target && cleaned.length >= 2) {
+    c = list.find((x) => norm(x.name) === cleaned);
+    if (c) return c.id;
+  }
+
+  // 3. 前缀包含匹配（双方 >= 2 字，排除已尝试的精确相等）
+  if (target.length >= 2) {
+    c = list.find((x) => {
+      const n = norm(x.name);
+      return n.length >= 2 && n !== target && (target.startsWith(n) || n.startsWith(target));
+    });
+    if (c) return c.id;
+  }
+
+  return null;
 }
 
 function listNovels() {
@@ -413,6 +442,8 @@ async function segmentNovelLLM(id, opts = {}) {
 
   // 计算 nextOrder（接着已有 segments 的最大 order + 1）
   let nextOrder = (novel.segments || []).reduce((max, s) => Math.max(max, s.order), -1) + 1;
+  // 收集未匹配到已有角色的 characterName，结束后汇总提示用户
+  const unmatchedNames = new Set();
 
   // 逐块处理
   for (let i = startChunkIndex; i < chunkTotal; i++) {
@@ -431,6 +462,8 @@ async function segmentNovelLLM(id, opts = {}) {
       for (const piece of pieces) {
         if (!piece) continue;
         const cid = hasChars ? matchCharacterId(s.characterName, novel.characters) : null;
+        // 收集未匹配的 characterName（有角色列表 + LLM 给了名字但没匹配上）
+        if (hasChars && s.characterName && !cid) unmatchedNames.add(s.characterName);
         // 累加对应角色的 appearances 计数（仅当成功匹配时）
         if (cid) {
           const matched = (novel.characters || []).find((c) => c.id === cid);
@@ -457,6 +490,14 @@ async function segmentNovelLLM(id, opts = {}) {
       chunkIndex: i + 1, chunkTotal,
       segmentsSoFar: novel.segments.length,
       novel,
+    });
+  }
+
+  // 全部完成：若有未匹配的角色名，汇总提示用户（前端在实时输出日志区显示）
+  if (unmatchedNames.size > 0) {
+    opts.onProgress && opts.onProgress({
+      type: 'warn',
+      message: `以下角色名未匹配到已有角色（已置为未绑定）：${Array.from(unmatchedNames).join('、')}`,
     });
   }
 

@@ -111,6 +111,10 @@ window.NovelManager = (function () {
 
   function renderDetail(novel) {
     const root = Utils.$('#novel-content');
+    // 保护分段状态条（增量分段时 renderDetail 会被频繁调用，避免销毁状态条与实时输出日志）
+    const savedBar = Utils.$('#seg-status-bar');
+    if (savedBar) savedBar.remove();
+
     root.innerHTML = '';
 
     const detail = Utils.el('div', { class: 'novel-detail' });
@@ -161,16 +165,21 @@ window.NovelManager = (function () {
               sel.appendChild(opt);
             }
             sel.addEventListener('change', async () => {
+              const newVal = sel.value;
+              const oldVal = seg.characterId;
               try {
-                await API.updateSegment(novel.id, seg.id, { characterId: sel.value });
-                // 同步 currentNovel 段落
+                await API.updateSegment(novel.id, seg.id, { characterId: newVal });
+                // 同步闭包 seg + currentNovel 段落数据
+                seg.characterId = newVal || null;
                 const segIdx = currentNovel.segments.findIndex((s) => s.id === seg.id);
-                if (segIdx >= 0) currentNovel.segments[segIdx].characterId = sel.value || null;
+                if (segIdx >= 0) currentNovel.segments[segIdx].characterId = newVal || null;
+                // 局部更新绑定高亮（不重新渲染列表，保留滚动位置）
+                updateSegBlockBindingDOM(seg.id);
                 Utils.toast('已换绑角色', 'success');
-                renderDetail(currentNovel); // 重新渲染以更新高亮
               } catch (err) {
+                // 回滚 select 到原值（不重新渲染，保留滚动位置）
+                sel.value = oldVal || '';
                 Utils.toast('换绑失败: ' + err.message, 'error');
-                renderDetail(currentNovel);
               }
             });
             sel.addEventListener('click', (e) => e.stopPropagation()); // 防止触发段落跳转
@@ -201,8 +210,58 @@ window.NovelManager = (function () {
     detail.appendChild(segView);
     root.appendChild(detail);
 
+    // 重新插入状态条到 toolbar 之后（保留实时输出日志内容）
+    if (savedBar) {
+      const toolbarEl = Utils.$('.segment-toolbar');
+      if (toolbarEl) toolbarEl.after(savedBar);
+    }
+
     // 绑定播放器事件
     bindPlayerEvents();
+  }
+
+  /**
+   * 局部更新单个段落 block 的绑定状态（不重建列表，保留滚动位置）
+   * 用于换绑角色后更新 unbound 高亮 + ⚠ 标记
+   */
+  function updateSegBlockBindingDOM(segId) {
+    const block = Utils.$(`#segment-view .seg-block[data-seg-id="${segId}"]`);
+    if (!block) return;
+    const seg = (currentNovel.segments || []).find((s) => s.id === segId);
+    if (!seg) return;
+    const unbound = seg.type === 'dialog' && !seg.characterId;
+    block.classList.toggle('unbound', unbound);
+    // 添加/移除 ⚠ 未绑定 标记（位于 seg-type 之后）
+    let flag = block.querySelector('.seg-unbound-flag');
+    if (unbound && !flag) {
+      const segType = block.querySelector('.seg-type');
+      flag = Utils.el('span', { class: 'seg-unbound-flag' }, '⚠ 未绑定');
+      if (segType && segType.nextSibling) segType.parentNode.insertBefore(flag, segType.nextSibling);
+      else if (segType) segType.parentNode.appendChild(flag);
+    } else if (!unbound && flag) {
+      flag.remove();
+    }
+  }
+
+  /**
+   * 保存滚动位置（window + #segment-view），供 renderDetail 前后保持视图不跳动
+   */
+  function saveScrollPos() {
+    const sv = Utils.$('#segment-view');
+    return {
+      window: window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0,
+      segView: sv ? sv.scrollTop : 0,
+    };
+  }
+  function restoreScrollPos(pos) {
+    if (!pos) return;
+    if (pos.window) {
+      window.scrollTo(0, pos.window);
+    }
+    if (pos.segView) {
+      const sv = Utils.$('#segment-view');
+      if (sv) sv.scrollTop = pos.segView;
+    }
   }
 
   function currentPlayingId() {
@@ -406,8 +465,12 @@ window.NovelManager = (function () {
     }
   }
 
-  // === LLM 增量分段（非阻塞状态条 + 可取消可继续）===
+  // === LLM 增量分段（非阻塞状态条 + 可取消可继续 + 实时输出日志）===
   let segController = null;
+  // 当前正在流式追加的 token 行（同 role 的 delta 追加到同一行，role 切换或新块开始时新建行）
+  let segLogCurrentLine = null;
+  let segLogCurrentRole = null;
+  const SEG_LOG_MAX_LINES = 300;
 
   async function startLLMSegmentation(mode) {
     // mode: 'start' | 'continue' | 'fresh'
@@ -439,34 +502,55 @@ window.NovelManager = (function () {
     if (!hasChars) body.forceEmpty = true; // 执意继续
 
     segController = new AbortController();
-    showSegStatusBar('分块分段中：准备中...', { cancellable: true });
+    // 创建/重置状态条（含日志区），默认展开实时输出
+    showSegStatusBar('分块分段中：准备中...', { cancellable: true, showLog: true });
+    resetSegLog();
 
     try {
       const data = await API.streamSegmentLLM(currentNovel.id, body, (evt) => {
         const p = evt.data || {};
         if (evt.event === 'progress') {
           if (p.type === 'chunk-persisted') {
+            // 保存滚动位置（renderDetail 会重建列表导致回顶）
+            const savedScroll = saveScrollPos();
             // 增量刷新：用后端返回的 novel 直接更新视图
             currentNovel = p.novel;
             renderDetail(currentNovel);
+            // 恢复滚动位置
+            restoreScrollPos(savedScroll);
             updateSegStatusBar(
               `分块分段中：第 ${p.chunkIndex}/${p.chunkTotal} 大段，已生成 ${p.segmentsSoFar} 段`,
               { cancellable: true }
             );
+            // 块持久化后加分隔线到日志
+            appendSegLogLine(`── 第 ${p.chunkIndex}/${p.chunkTotal} 块完成，已持久化 ──`, 'chunk');
           } else if (p.type === 'start') {
             const startIdx = p.startChunkIndex || 0;
             updateSegStatusBar(
               startIdx > 0 ? `从第 ${startIdx + 1} 块继续，共 ${p.chunkTotal} 块...` : `开始处理，共 ${p.chunkTotal} 块...`,
               { cancellable: true }
             );
+            appendSegLogLine(
+              startIdx > 0 ? `── 从第 ${startIdx + 1} 块继续，共 ${p.chunkTotal} 块 ──` : `── 开始处理，共 ${p.chunkTotal} 块 ──`,
+              'chunk'
+            );
+          } else if (p.type === 'token') {
+            // 实时追加 LLM token 到日志区（reasoning 灰色斜体，content 正常色）
+            appendSegLogToken(p.role, p.delta || '');
+          } else if (p.type === 'chunk') {
+            // 单块 LLM 返回完成：重置 token 行，下块新建
+            segLogCurrentLine = null;
+            segLogCurrentRole = null;
+          } else if (p.type === 'warn') {
+            appendSegLogLine('⚠ ' + (p.message || '警告'), 'warn');
           }
-          // token 事件不阻塞，状态条不显示（避免抖动）
         } else if (evt.event === 'error') {
           if (p.code === 'NO_CHARACTERS') {
             Utils.toast(p.message, 'error');
           } else {
             Utils.toast('分段错误: ' + (p.message || '未知错误'), 'error');
           }
+          appendSegLogLine('✖ 错误: ' + (p.message || '未知错误'), 'error');
         }
       }, segController.signal);
       // done
@@ -476,7 +560,8 @@ window.NovelManager = (function () {
         CharacterPanel.setNovel(currentNovel);
         renderDetail(currentNovel);
       }
-      hideSegStatusBar();
+      appendSegLogLine('✓ 分段完成', 'ok');
+      updateSegStatusBar('分段完成', { done: true });
       const unbound = (currentNovel.segments || []).filter((s) => s.type === 'dialog' && !s.characterId).length;
       const tip = unbound > 0
         ? `LLM 分段完成: ${(currentNovel.segments || []).length} 段，${unbound} 个对话段未绑定角色（⚠ 标记）`
@@ -484,6 +569,7 @@ window.NovelManager = (function () {
       Utils.toast(tip, unbound > 0 ? 'info' : 'success');
     } catch (err) {
       if (err && (err.name === 'AbortError' || err.code === 'ABORTED')) {
+        appendSegLogLine('⏹ 已取消', 'cancel');
         // 取消：刷新已分段数据，显示继续按钮
         await refreshCurrent();
         try {
@@ -494,30 +580,60 @@ window.NovelManager = (function () {
               { showContinue: true }
             );
           } else {
-            hideSegStatusBar();
+            updateSegStatusBar('已取消', { done: true });
           }
-        } catch (_) { hideSegStatusBar(); }
+        } catch (_) { updateSegStatusBar('已取消', { done: true }); }
       } else {
+        appendSegLogLine('✖ 失败: ' + (err && err.message), 'error');
         Utils.toast('分段失败: ' + (err && err.message), 'error');
-        hideSegStatusBar();
+        updateSegStatusBar('分段失败', { done: true });
       }
     } finally {
       segController = null;
     }
   }
 
+  /**
+   * 显示/更新分段状态条。结构：
+   *   #seg-status-bar
+   *     #seg-status-line  （状态行：文字 + 按钮，可重建）
+   *     #seg-status-log   （实时输出日志区，持久不重建）
+   * opts: { cancellable, showContinue, done, showLog }
+   */
   function showSegStatusBar(text, opts) {
     opts = opts || {};
     let bar = Utils.$('#seg-status-bar');
     if (!bar) {
       bar = Utils.el('div', { id: 'seg-status-bar', class: 'seg-status-bar' });
-      // 插入到 segment-toolbar 之后
+      const line = Utils.el('div', { id: 'seg-status-line', class: 'seg-status-line' });
+      const log = Utils.el('div', { id: 'seg-status-log', class: 'seg-status-log hidden' });
+      bar.appendChild(line);
+      bar.appendChild(log);
       const toolbar = Utils.$('.segment-toolbar');
       if (toolbar) toolbar.after(bar);
       else Utils.$('#novel-content').appendChild(bar);
     }
-    bar.innerHTML = '';
-    bar.appendChild(Utils.el('span', { class: 'seg-status-text' }, text));
+    // 只重建状态行（保留日志区内容）
+    const line = Utils.$('#seg-status-line');
+    line.innerHTML = '';
+    line.appendChild(Utils.el('span', { class: 'seg-status-text' }, text));
+
+    // 实时输出切换按钮（日志区有内容或 showLog 时显示）
+    const log = Utils.$('#seg-status-log');
+    const hasLog = log && log.children.length > 0;
+    if (hasLog || opts.showLog) {
+      const toggleBtn = Utils.el('button', { class: 'btn btn-link btn-sm seg-log-toggle' },
+        (log && !log.classList.contains('hidden')) ? '📤 隐藏输出' : '📥 实时输出');
+      toggleBtn.addEventListener('click', () => {
+        const lg = Utils.$('#seg-status-log');
+        if (!lg) return;
+        lg.classList.toggle('hidden');
+        toggleBtn.textContent = lg.classList.contains('hidden') ? '📥 实时输出' : '📤 隐藏输出';
+        if (!lg.classList.contains('hidden')) lg.scrollTop = lg.scrollHeight;
+      });
+      line.appendChild(toggleBtn);
+    }
+
     if (opts.cancellable) {
       const cancelBtn = Utils.el('button', { class: 'btn btn-danger btn-sm' }, '取消分段');
       cancelBtn.addEventListener('click', () => {
@@ -526,7 +642,7 @@ window.NovelManager = (function () {
           Utils.toast('正在取消...', 'info');
         }
       });
-      bar.appendChild(cancelBtn);
+      line.appendChild(cancelBtn);
     }
     if (opts.showContinue) {
       const contBtn = Utils.el('button', { class: 'btn btn-primary btn-sm' }, '继续分段');
@@ -536,20 +652,64 @@ window.NovelManager = (function () {
         if (!confirm('重新开始将清空已分段的段落，确定吗？')) return;
         startLLMSegmentation('fresh');
       });
-      bar.appendChild(contBtn);
-      bar.appendChild(freshBtn);
+      line.appendChild(contBtn);
+      line.appendChild(freshBtn);
     }
+    if (opts.done) {
+      const closeBtn = Utils.el('button', { class: 'btn btn-secondary btn-sm' }, '关闭');
+      closeBtn.addEventListener('click', () => hideSegStatusBar());
+      line.appendChild(closeBtn);
+    }
+    // showLog 时默认展开日志区
+    if (opts.showLog && log) log.classList.remove('hidden');
     bar.classList.remove('hidden');
   }
 
   function updateSegStatusBar(text, opts) {
-    // 复用 showSegStatusBar 重建按钮（保持按钮事件绑定最新）
+    // 复用 showSegStatusBar 重建状态行（保留日志区）
     showSegStatusBar(text, opts);
   }
 
   function hideSegStatusBar() {
     const bar = Utils.$('#seg-status-bar');
     if (bar) bar.remove();
+    segLogCurrentLine = null;
+    segLogCurrentRole = null;
+  }
+
+  // === 实时输出日志区操作 ===
+  function resetSegLog() {
+    const log = Utils.$('#seg-status-log');
+    if (!log) return;
+    log.innerHTML = '';
+    segLogCurrentLine = null;
+    segLogCurrentRole = null;
+  }
+
+  function appendSegLogToken(role, delta) {
+    if (!delta) return;
+    const log = Utils.$('#seg-status-log');
+    if (!log) return;
+    if (!segLogCurrentLine || segLogCurrentRole !== role) {
+      const prefix = role === 'reasoning' ? '💭 ' : '💬 ';
+      segLogCurrentLine = Utils.el('div', { class: 'seg-log-line ' + role }, prefix);
+      log.appendChild(segLogCurrentLine);
+      segLogCurrentRole = role;
+      while (log.childNodes.length > SEG_LOG_MAX_LINES) log.removeChild(log.firstChild);
+    }
+    segLogCurrentLine.textContent += delta;
+    if (!log.classList.contains('hidden')) log.scrollTop = log.scrollHeight;
+  }
+
+  function appendSegLogLine(text, kind) {
+    const log = Utils.$('#seg-status-log');
+    if (!log) return;
+    const line = Utils.el('div', { class: 'seg-log-line' + (kind ? ' ' + kind : '') }, text);
+    log.appendChild(line);
+    segLogCurrentLine = null;
+    segLogCurrentRole = null;
+    while (log.childNodes.length > SEG_LOG_MAX_LINES) log.removeChild(log.firstChild);
+    if (!log.classList.contains('hidden')) log.scrollTop = log.scrollHeight;
   }
 
   async function deleteNovel(id) {
