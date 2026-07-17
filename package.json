@@ -1,0 +1,21 @@
+{
+  "name": "voice-novel",
+  "version": "1.0.0",
+  "description": "小说语音播放应用 — 基于方舟 Agent Plan TTS 与 LLM 实现多人有声书",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/parse.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  }
+}

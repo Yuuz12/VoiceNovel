@@ -1,0 +1,183 @@
+/* ============ 设置视图 ============ */
+#view-settings.active {
+  display: block;
+  overflow-y: auto;
+}
+
+.settings-wrap {
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 0 20px 80px;
+}
+
+.settings-wrap h2 {
+  font-size: 20px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  margin-bottom: 20px;
+}
+
+.settings-section {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.settings-section legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.symbol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.symbol-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.symbol-pair input {
+  width: 80px;
+  text-align: center;
+}
+
+.symbol-pair .arrow {
+  color: var(--text-mute);
+}
+
+.symbol-pair .btn-remove {
+  color: var(--danger);
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.sticky-save {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+}
+
+/* ============ 角色卡片 ============ */
+.character-card {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.character-card .char-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.character-card .char-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.character-card .char-gender {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.character-card .char-gender.female {
+  background: rgba(245, 166, 35, 0.2);
+  color: var(--warning);
+}
+
+.character-card .char-gender.male {
+  background: rgba(74, 144, 226, 0.2);
+  color: var(--secondary);
+}
+
+.character-card .char-gender.unknown {
+  background: rgba(154, 160, 180, 0.2);
+  color: var(--text-dim);
+}
+
+.character-card .char-desc {
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.character-card .char-stats {
+  font-size: 10px;
+  color: var(--text-mute);
+  margin-bottom: 8px;
+}
+
+.character-card .char-voice-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.character-card .char-voice-row select {
+  flex: 1;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.character-card .char-voice-row .btn-preview {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.character-card .char-sliders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.character-card .char-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.character-card .char-slider label {
+  font-size: 10px;
+  color: var(--text-mute);
+  display: flex;
+  justify-content: space-between;
+}
+
+.character-card .char-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+}
+
+/* 角色面板操作按钮 */
+.panel-actions {
+  padding: 0 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-actions .btn {
+  width: 100%;
+  justify-content: center;
+}

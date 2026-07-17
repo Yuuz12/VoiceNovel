@@ -1,0 +1,360 @@
+/* ============ 播放器样式 ============ */
+
+/* 小说详情容器 */
+.novel-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.novel-detail-head {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.novel-detail-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.novel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* 播放器条 */
+.player-bar {
+  background: var(--bg-elevated-2);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.15s;
+  border: 1px solid var(--border);
+}
+
+.player-btn:hover {
+  background: var(--bg-hover);
+}
+
+.player-btn.play-btn {
+  width: 44px;
+  height: 44px;
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+  font-size: 16px;
+}
+
+.player-btn.play-btn:hover {
+  background: var(--primary-hover);
+}
+
+.player-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.player-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.player-segment-info {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-segment-info .seg-type {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.player-segment-info .seg-type.narration {
+  background: rgba(74, 144, 226, 0.2);
+  color: var(--secondary);
+}
+
+.player-segment-info .seg-type.dialog {
+  background: rgba(46, 204, 143, 0.2);
+  color: var(--success);
+}
+
+.player-segment-info .char-name {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.player-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+}
+
+.player-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.player-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  width: 0%;
+  transition: width 0.1s linear;
+}
+
+.player-progress-fill.loading {
+  background: var(--warning);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.player-speed {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.player-speed select {
+  padding: 2px 6px;
+  font-size: 11px;
+  background: var(--bg-elevated);
+}
+
+/* 段落文本显示 */
+.segment-view {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--text);
+  min-height: 0;
+}
+
+.segment-view .seg-block {
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.segment-view .seg-block:hover {
+  background: var(--bg-elevated);
+}
+
+.segment-view .seg-block.narration {
+  border-left-color: var(--secondary);
+}
+
+.segment-view .seg-block.dialog {
+  border-left-color: var(--success);
+}
+
+.segment-view .seg-block.current {
+  background: var(--primary-soft);
+  border-left-color: var(--primary);
+}
+
+.segment-view .seg-block .seg-tag {
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.segment-view .seg-block .seg-text {
+  font-size: 14px;
+}
+
+.segment-view .seg-block.dialog .seg-text {
+  font-style: italic;
+}
+
+.segment-view .seg-block .seg-char {
+  color: var(--primary);
+  font-weight: 500;
+  font-style: normal;
+}
+
+/* 段落分段工具 */
+.segment-toolbar {
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.segment-toolbar .seg-count {
+  margin-left: auto;
+  color: var(--text-mute);
+}
+
+/* 段落重新生成按钮：靠右，默认半透明，hover 高亮 */
+.segment-view .seg-block .seg-regen {
+  margin-left: auto;
+  padding: 2px 6px;
+  font-size: 13px;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+}
+.segment-view .seg-block .seg-regen:hover {
+  opacity: 1;
+  color: var(--primary);
+}
+
+/* 未绑定角色的对话段：黄色高亮提示手动选 */
+.segment-view .seg-block.unbound {
+  border-left-color: var(--warning);
+  background: rgba(241, 196, 15, 0.08);
+}
+.segment-view .seg-block.unbound:hover {
+  background: rgba(241, 196, 15, 0.15);
+}
+.segment-view .seg-block .seg-unbound-flag {
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 段落角色选择下拉：小尺寸，与 seg-tag 协调 */
+.segment-view .seg-block .seg-char-select {
+  padding: 1px 4px;
+  font-size: 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--primary);
+  font-weight: 500;
+  max-width: 120px;
+  cursor: pointer;
+}
+.segment-view .seg-block .seg-char-select:focus {
+  outline: 1px solid var(--primary);
+}
+
+/* === LLM 分段非阻塞状态条（可取消/可继续）=== */
+.seg-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin: 8px 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.seg-status-bar .seg-status-text {
+  flex: 1;
+  min-width: 200px;
+  color: var(--text);
+}
+.seg-status-bar .btn {
+  flex-shrink: 0;
+}
+
+/* === 角色名/描述 inline 编辑 === */
+.editable {
+  cursor: text;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px dashed transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.editable:hover {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: var(--border);
+}
+.editable.placeholder {
+  color: var(--text-muted, #999);
+  font-style: italic;
+}
+.editable-multiline {
+  display: block;
+  width: 100%;
+  min-height: 1.4em;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+/* === 角色卡片删除按钮 === */
+.btn-icon {
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+}
+.btn-icon:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
+}
+.btn-del-char {
+  color: var(--danger, #e74c3c);
+  margin-left: auto;
+}
