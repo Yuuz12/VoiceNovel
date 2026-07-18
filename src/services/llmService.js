@@ -4,8 +4,17 @@ const logger = require('../utils/logger');
 
 // 单次 LLM 请求的兜底超时（防 TCP 半开/网络挂起永久卡死）。
 // 注意：这是「单次 chat」级别，不是整个任务级别——长文本被切成多个 chunk，
-// 每个 chunk 独立计时，所以整个任务可以运行很久而不被误杀。可通过 opts.timeoutMs 覆盖。
+// 每个 chunk 独立计时，所以整个任务可以运行很久而不被误杀。
+// 优先级：opts.timeoutMs（测试用） > settings.timeoutSeconds（前端可配） > 此兜底值。
 const FALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+
+// 解析单次请求超时（ms）：opts.timeoutMs > settings.timeoutSeconds > 兜底
+function resolveTimeoutMs(opts, settings) {
+  if (opts && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0) return opts.timeoutMs;
+  const secs = settings && Number.isFinite(settings.timeoutSeconds) ? settings.timeoutSeconds : 0;
+  if (secs > 0) return secs * 1000;
+  return FALLBACK_TIMEOUT_MS;
+}
 
 class LLMError extends Error {
   constructor(message, code) {
@@ -62,7 +71,7 @@ async function chat(settings, messages, opts = {}) {
   }
   const baseUrl = (settings.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   const url = `${baseUrl}/chat/completions`;
-  const timeoutMs = opts.timeoutMs || FALLBACK_TIMEOUT_MS;
+  const timeoutMs = resolveTimeoutMs(opts, settings);
 
   const body = {
     model: settings.model || 'gpt-4o-mini',
@@ -132,7 +141,7 @@ async function chatStream(settings, messages, opts = {}) {
   }
   const baseUrl = (settings.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   const url = `${baseUrl}/chat/completions`;
-  const timeoutMs = opts.timeoutMs || FALLBACK_TIMEOUT_MS;
+  const timeoutMs = resolveTimeoutMs(opts, settings);
 
   const body = {
     model: settings.model || 'gpt-4o-mini',

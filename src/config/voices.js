@@ -128,13 +128,62 @@ function findByGender(gender) {
   return VOICES.filter((v) => v.gender === gender);
 }
 
-// 默认旁白音色
+// ========== 小米 MIMO 预置精品音色（mimo-v2.5-tts）==========
+// 数据来源：https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5
+// 字段含义同火山音色；id 即音色名（调用时作为 audio.voice）
+const MIMO_VOICES = [
+  // 中文
+  { id: '冰糖', name: '冰糖', gender: 'female', scenario: '中文音色', style: '活泼少女', age: 'young', tags: ['中文', '女声', '活泼', '少女', 'MIMO'] },
+  { id: '茉莉', name: '茉莉', gender: 'female', scenario: '中文音色', style: '知性女声', age: 'middle', tags: ['中文', '女声', '知性', '成熟', 'MIMO'] },
+  { id: '苏打', name: '苏打', gender: 'male', scenario: '中文音色', style: '阳光少年', age: 'young', tags: ['中文', '男声', '阳光', '少年', 'MIMO'] },
+  { id: '白桦', name: '白桦', gender: 'male', scenario: '中文音色', style: '成熟男声', age: 'middle', tags: ['中文', '男声', '成熟', '磁性', 'MIMO'] },
+  // English
+  { id: 'Mia', name: 'Mia', gender: 'female', scenario: 'English Voices', style: 'Lively girl', age: 'young', tags: ['English', 'Female', 'Lively', 'MIMO'] },
+  { id: 'Chloe', name: 'Chloe', gender: 'female', scenario: 'English Voices', style: 'Sweet Dreamy', age: 'young', tags: ['English', 'Female', 'Sweet', 'MIMO'] },
+  { id: 'Milo', name: 'Milo', gender: 'male', scenario: 'English Voices', style: 'Sunny boy', age: 'young', tags: ['English', 'Male', 'Sunny', 'MIMO'] },
+  { id: 'Dean', name: 'Dean', gender: 'male', scenario: 'English Voices', style: 'Steady Gentle', age: 'middle', tags: ['English', 'Male', 'Steady', 'MIMO'] },
+];
+
+const VOICES_BY_PROVIDER = {
+  volcano: VOICES,
+  mimo: MIMO_VOICES,
+};
+
+// 按 provider 取音色列表
+function getVoicesByProvider(provider) {
+  return VOICES_BY_PROVIDER[provider] || VOICES;
+}
+
+// 按 provider 取分组
+function groupedByScenarioByProvider(provider) {
+  const list = getVoicesByProvider(provider);
+  const groups = {};
+  for (const v of list) {
+    if (!groups[v.scenario]) groups[v.scenario] = [];
+    groups[v.scenario].push(v);
+  }
+  return groups;
+}
+
+// 按 provider + id 查找
+function findByIdAndProvider(id, provider) {
+  return getVoicesByProvider(provider).find((v) => v.id === id) || null;
+}
+
+// 默认旁白音色（火山，迁移兼容）
 const DEFAULT_NARRATION_VOICE = 'zh_male_yizhipiannan_uranus_bigtts';
 
 module.exports = {
+  // 既有（火山）导出，保持向后兼容
   VOICES,
   groupedByScenario,
   findById,
   findByGender,
   DEFAULT_NARRATION_VOICE,
+  // 新增多 provider 导出
+  MIMO_VOICES,
+  VOICES_BY_PROVIDER,
+  getVoicesByProvider,
+  groupedByScenarioByProvider,
+  findByIdAndProvider,
 };

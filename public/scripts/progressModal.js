@@ -28,7 +28,7 @@ window.ProgressModal = (function () {
     const body = Utils.el('div', { class: 'modal-body' }, [statusEl, barWrap, chunkLabelEl, logEl]);
 
     titleEl = Utils.el('h3', {}, '');
-    closeBtn = Utils.el('button', { class: 'btn btn-icon', title: '关闭' }, '✕');
+    closeBtn = Utils.el('button', { class: 'btn btn-icon', title: '关闭' }, '×');
     const head = Utils.el('div', { class: 'modal-head' }, [titleEl, closeBtn]);
 
     cancelBtn = Utils.el('button', { class: 'btn btn-danger' }, '取消任务');
@@ -71,13 +71,13 @@ window.ProgressModal = (function () {
 
   /**
    * 流式追加一个 token delta 到当前行。role 切换或首次调用时新建行：
-   *   reasoning → 💭 灰色斜体（思考）
-   *   content   → 💬 正常色（输出）
+   *   reasoning → [思考] 灰色斜体
+   *   content   → [输出] 正常色
    */
   function appendToken(role, delta) {
     if (!delta) return;
     if (!currentTokenLine || currentTokenRole !== role) {
-      const prefix = role === 'reasoning' ? '💭 ' : '💬 ';
+      const prefix = role === 'reasoning' ? '[思考] ' : '[输出] ';
       currentTokenLine = Utils.el('div', { class: 'pm-log-line ' + role }, prefix);
       logEl.appendChild(currentTokenLine);
       currentTokenRole = role;

@@ -56,10 +56,9 @@
   color: var(--text-mute);
 }
 
-.symbol-pair .btn-remove {
-  color: var(--danger);
-  padding: 4px 8px;
-  font-size: 14px;
+.symbol-pair .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .sticky-save {
@@ -94,10 +93,13 @@
 }
 
 .character-card .char-gender {
-  font-size: 10px;
-  padding: 1px 5px;
+  font-size: 11px;
+  padding: 1px 4px 1px 6px;
   border-radius: 3px;
-  text-transform: uppercase;
+  border: 1px solid transparent;
+  cursor: pointer;
+  width: auto;
+  align-self: center;
 }
 
 .character-card .char-gender.female {
@@ -132,17 +134,21 @@
   display: flex;
   gap: 6px;
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .character-card .char-voice-row select {
   flex: 1;
   font-size: 12px;
   padding: 4px 8px;
+  min-width: 0;
 }
 
 .character-card .char-voice-row .btn-preview {
   padding: 4px 8px;
   font-size: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .character-card .char-sliders {
@@ -169,9 +175,9 @@
   accent-color: var(--primary);
 }
 
-/* 角色面板操作按钮 */
+/* 角色面板操作按钮：左右与 .character-card 对齐（panel-body 已有 12px padding） */
 .panel-actions {
-  padding: 0 12px 8px;
+  padding: 0 0 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -180,4 +186,85 @@
 .panel-actions .btn {
   width: 100%;
   justify-content: center;
+}
+
+/* ============ TTS 多服务切换 ============ */
+.provider-switch {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.provider-switch label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.provider-switch input[type="radio"] {
+  accent-color: var(--primary);
+}
+
+.provider-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.provider-panel[hidden] {
+  display: none;
+}
+
+.clone-sample-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.clone-sample-row select {
+  flex: 1;
+  min-width: 160px;
+}
+
+/* 角色卡片：MIMO 设计描述/复刻样本 行 */
+.character-card .char-mimo-design {
+  margin-bottom: 6px;
+}
+
+.character-card .char-mimo-design textarea {
+  width: 100%;
+  font-size: 12px;
+  resize: vertical;
+  padding: 4px 6px;
+}
+
+.character-card .char-clone-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.character-card .char-clone-row select {
+  flex: 1;
+  min-width: 120px;
+  max-width: 100%;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.character-card .char-clone-row .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.character-card .char-clone-name {
+  font-size: 11px;
+  color: var(--text-mute);
 }

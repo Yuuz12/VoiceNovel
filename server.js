@@ -28,6 +28,7 @@ const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR || './data');
 ensureDir(DATA_DIR);
 ensureDir(path.join(DATA_DIR, 'novels'));
 ensureDir(path.join(DATA_DIR, 'audio_cache'));
+ensureDir(path.join(DATA_DIR, 'voice_samples')); // MIMO 音色复刻样本
 
 // 初始化默认设置
 settingsService.init();

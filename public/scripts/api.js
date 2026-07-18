@@ -82,8 +82,13 @@ window.API = (function () {
   }
 
   return {
-    // 音色
-    listVoices: (grouped) => request('GET', '/voices' + (grouped ? '?grouped=1' : '')),
+    // 音色（?provider=volcano|mimo，默认取后端当前 provider）
+    listVoices: (grouped, provider) => {
+      const params = [];
+      if (grouped) params.push('grouped=1');
+      if (provider) params.push('provider=' + encodeURIComponent(provider));
+      return request('GET', '/voices' + (params.length ? '?' + params.join('&') : ''));
+    },
     previewVoiceUrl: (speaker, text, speed, volume) => {
       const q = new URLSearchParams({ speaker, text });
       if (speed !== undefined && speed !== 0) q.set('speed', speed);
@@ -91,6 +96,11 @@ window.API = (function () {
       return base + '/tts/preview?' + q.toString();
     },
     testTts: () => request('GET', '/tts/test'),
+
+    // 复刻样本管理（MIMO voiceclone）
+    uploadVoiceSample: (name, base64) => request('POST', '/tts/voice-sample', { name, base64 }),
+    listVoiceSamples: () => request('GET', '/tts/voice-samples'),
+    deleteVoiceSample: (path) => request('DELETE', '/tts/voice-sample?path=' + encodeURIComponent(path)),
 
     // 设置
     getSettings: () => request('GET', '/settings'),

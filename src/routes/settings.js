@@ -21,9 +21,17 @@ router.put('/', (req, res) => {
   res.json(maskSecrets(next));
 });
 
+// 掩码所有 provider 的 apiKey + LLM apiKey
 function maskSecrets(s) {
   const out = JSON.parse(JSON.stringify(s));
-  if (out.tts && out.tts.apiKey) out.tts.apiKey = mask(out.tts.apiKey);
+  if (out.tts && out.tts.providers) {
+    for (const name of Object.keys(out.tts.providers)) {
+      const p = out.tts.providers[name];
+      if (p && typeof p.apiKey === 'string' && p.apiKey) {
+        p.apiKey = mask(p.apiKey);
+      }
+    }
+  }
   if (out.llm && out.llm.apiKey) out.llm.apiKey = mask(out.llm.apiKey);
   return out;
 }
@@ -33,10 +41,21 @@ function mask(secret) {
   return secret.slice(0, 4) + '****' + secret.slice(-4);
 }
 
+// 还原掩码 apiKey：若提交值含 * 或为空字符串，用原值替换
 function restoreSecrets(body, current) {
-  // 若提交的 apiKey 含 * 或为空字符串，则用原值替换
-  if (body.tts && typeof body.tts.apiKey === 'string' && (body.tts.apiKey.includes('*') || body.tts.apiKey === '')) {
-    body.tts.apiKey = current.tts.apiKey;
+  if (body.tts && body.tts.providers && current.tts && current.tts.providers) {
+    for (const name of Object.keys(body.tts.providers)) {
+      const submitted = body.tts.providers[name];
+      const original = current.tts.providers[name];
+      if (
+        submitted &&
+        typeof submitted.apiKey === 'string' &&
+        (submitted.apiKey.includes('*') || submitted.apiKey === '') &&
+        original
+      ) {
+        submitted.apiKey = original.apiKey;
+      }
+    }
   }
   if (body.llm && typeof body.llm.apiKey === 'string' && (body.llm.apiKey.includes('*') || body.llm.apiKey === '')) {
     body.llm.apiKey = current.llm.apiKey;

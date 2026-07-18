@@ -87,6 +87,11 @@ label {
   display: none !important;
 }
 
+/* hidden 属性全局兜底：防止 .form-row 等类的 display:flex 覆盖 [hidden] 的默认 display:none */
+[hidden] {
+  display: none !important;
+}
+
 /* ============ 头部 ============ */
 .app-header {
   display: flex;
@@ -665,6 +670,6 @@ label {
 .pm-log-line.fallback { color: var(--warning); }
 .pm-log-line.error { color: var(--danger); }
 .pm-log-line.cancel { color: var(--text-mute); }
-/* LLM 流式 token：💭 思考（灰色斜体）/ 💬 输出（正常色） */
+/* LLM 流式 token：思考（灰色斜体）/ 输出（正常色） */
 .pm-log-line.reasoning { color: var(--text-mute); font-style: italic; }
 .pm-log-line.content { color: var(--text); }

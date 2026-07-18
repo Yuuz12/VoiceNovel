@@ -19,10 +19,10 @@ let failed = 0;
 function check(name, fn) {
   try {
     fn();
-    console.log(`  ✓ ${name}`);
+    console.log(`  [PASS] ${name}`);
     passed += 1;
   } catch (e) {
-    console.error(`  ✗ ${name}`);
+    console.error(`  [FAIL] ${name}`);
     console.error(`    ${e.message}`);
     failed += 1;
   }

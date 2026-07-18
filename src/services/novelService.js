@@ -37,7 +37,7 @@ function clearSegmentProgress(novelId) {
  *   1. 精确匹配（trim 后）
  *   2. 去掉尾部说话动词后缀（道/说/问/笑道/说道...）后精确匹配
  *   3. 前缀包含匹配（角色名 >= 2 字，LLM 名以角色名开头或反之）
- * 找不到返回 null（段落显示 ⚠ 未绑定，用户手动选）
+ * 找不到返回 null（段落显示未绑定，用户手动选）
  */
 const SPEECH_SUFFIX_RE = /(?:微笑着|轻声|低声|高声|大声|冷冷|淡淡|缓缓|微微|轻轻|笑了笑|想了想|顿了顿|继续道|接着道|补充道|说道|喝道|喊道|怒道|冷哼|轻哼|笑骂|打趣|反驳|附和|解释|询问|回答|嗤笑|讥讽|嘲笑|调侃|嘀咕|嘟囔|沉声|冷声|轻笑|大笑|冷笑|笑道|问道|答道|叫道|吼道|叹道|哭道|道|说|问|答|喊|叫|吼|喝|笑|叹)+$/;
 function matchCharacterId(name, characters) {
@@ -237,7 +237,7 @@ function parseWithRules(text, parsingSettings) {
     description: '',
     gender: 'unknown',
     voiceId: null, // 待自动匹配或用户手动配置
-    voiceConfig: { speed: 0, volume: 0 },
+    voiceConfig: { speed: 0, volume: 0, mimo: {} },
     appearances: info.count,
   }));
 
@@ -355,7 +355,7 @@ function segmentNovelRule(id) {
  *
  * 关键设计：
  * 1. 只复用已有角色（不创建/不覆盖 novel.characters），按名字匹配绑定 characterId；
- *    找不到同名角色 → characterId = null（段落显示 ⚠，用户手动选）
+ *    找不到同名角色 → characterId = null（段落标记未绑定，用户手动选）
  * 2. 已有角色为空时默认抛 NO_CHARACTERS，让前端提示用户先提取/新建角色；
  *    opts.forceEmpty=true（用户执意）则继续，所有段落 characterId=null
  * 3. 长文本按 settings.parsing.llmChunkSize 切块，逐块调 LLM，每块完成立即持久化 + 推 chunk-persisted 事件
@@ -532,8 +532,20 @@ function updateCharacter(novelId, characterId, partial) {
   if (typeof partial.gender === 'string') c.gender = partial.gender;
   if (typeof partial.description === 'string') c.description = partial.description;
   if (typeof partial.voiceId === 'string') c.voiceId = partial.voiceId;
+  if (partial.voiceId === null) c.voiceId = null;
   if (partial.voiceConfig && typeof partial.voiceConfig === 'object') {
-    c.voiceConfig = { ...c.voiceConfig, ...partial.voiceConfig };
+    // 深合并 voiceConfig：保留既有 speed/volume/mimo.*，仅覆盖提交的键
+    const cur = c.voiceConfig || {};
+    const next = { ...cur };
+    for (const k of Object.keys(partial.voiceConfig)) {
+      const pv = partial.voiceConfig[k];
+      if (pv && typeof pv === 'object' && !Array.isArray(pv)) {
+        next[k] = { ...(cur[k] || {}), ...pv };
+      } else {
+        next[k] = pv;
+      }
+    }
+    c.voiceConfig = next;
   }
   saveNovel(novel);
   return c;
@@ -567,7 +579,7 @@ async function extractCharacters(novelId, opts = {}) {
     description: ext.description || '',
     gender: ext.gender || 'unknown',
     voiceId: null,
-    voiceConfig: { speed: 0, volume: 0 },
+    voiceConfig: { speed: 0, volume: 0, mimo: {} },
     appearances: 0,
   }));
   // 3. 新角色 name→id 映射，用于段落换绑
@@ -628,7 +640,7 @@ function addCharacter(novelId, partial) {
     description: (partial && partial.description) || '',
     gender: (partial && partial.gender) || 'unknown',
     voiceId: null,
-    voiceConfig: { speed: 0, volume: 0 },
+    voiceConfig: { speed: 0, volume: 0, mimo: {} },
     appearances: 0,
   };
   novel.characters = novel.characters || [];
@@ -639,7 +651,7 @@ function addCharacter(novelId, partial) {
 
 /**
  * 删除角色：移除角色 + 清空绑定到该角色的段落 characterId
- * 段落显示 ⚠ 未绑定，用户可在段落列表手动重绑
+ * 段落显示未绑定，用户可在段落列表手动重绑
  */
 function deleteCharacter(novelId, characterId) {
   const novel = getNovel(novelId);

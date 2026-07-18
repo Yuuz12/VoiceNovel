@@ -15,6 +15,7 @@ const novelService = require('../services/novelService');
 const settingsService = require('../services/settingsService');
 const ttsService = require('../services/ttsService');
 const audioCache = require('../services/audioCacheService');
+const { resolveSegmentSpeaker } = require('../services/tts/voiceResolver');
 const logger = require('../utils/logger');
 
 function send(ws, obj) {
@@ -28,40 +29,6 @@ function send(ws, obj) {
 
 function sendError(ws, message, code) {
   send(ws, { type: 'error', message, code: code || null });
-}
-
-/**
- * 解析某段的 speaker：dialog 段用角色音色（未配置则 fallback 旁白），narration 段用旁白音色
- */
-function resolveSegmentSpeaker(novel, segment) {
-  const settings = settingsService.get();
-  if (segment.type === 'dialog' && segment.characterId) {
-    const c = (novel.characters || []).find((x) => x.id === segment.characterId);
-    if (c) {
-      if (c.voiceId) {
-        return {
-          speaker: c.voiceId,
-          characterName: c.name,
-          speed: (c.voiceConfig && c.voiceConfig.speed) || 0,
-          volume: (c.voiceConfig && c.voiceConfig.volume) || 0,
-        };
-      }
-      // 角色未配置音色 → 退化到旁白音色
-      return {
-        speaker: settings.narration.voiceId,
-        characterName: c.name,
-        speed: settings.narration.speed,
-        volume: settings.narration.volume,
-      };
-    }
-  }
-  // 旁白
-  return {
-    speaker: settings.narration.voiceId,
-    characterName: null,
-    speed: settings.narration.speed,
-    volume: settings.narration.volume,
-  };
 }
 
 /**
@@ -155,9 +122,9 @@ async function streamSegment(ws, connId, novelId, segmentId, controller, force) 
     return send(ws, { type: 'end', segmentId });
   }
 
-  const { speaker, characterName, speed, volume } = resolveSegmentSpeaker(novel, segment);
-  const key = audioCache.computeKey(speaker, segment.text, { speed, volume });
   const settings = settingsService.get();
+  const { speaker, characterName, speed, volume } = resolveSegmentSpeaker(novel, segment, settings);
+  const key = audioCache.computeKey(speaker, segment.text, { speed, volume });
 
   // force：删除缓存，强制走 TTS 重新合成
   if (force) {
@@ -175,9 +142,22 @@ async function streamSegment(ws, connId, novelId, segmentId, controller, force) 
     force: !!force,
   });
 
-  // 校验 API Key
-  if (!settings.tts.apiKey) {
-    return sendError(ws, '未配置 TTS API Key，请在设置页填写', 'NO_API_KEY');
+  // 校验 API Key（按当前 provider 取对应配置）
+  const provider = (settings.tts && settings.tts.provider) || 'volcano';
+  const providerCfg = (settings.tts && settings.tts.providers && settings.tts.providers[provider]) || {};
+  if (!providerCfg.apiKey) {
+    const label = provider === 'mimo' ? '小米 MIMO' : '火山方舟';
+    return sendError(ws, `未配置 ${label} TTS API Key，请在设置页填写`, 'NO_API_KEY');
+  }
+  // voicedesign/voiceclone 模式下 speaker 必填（描述/样本），缺失则提示
+  if (!speaker) {
+    const mimoMode = providerCfg.mode;
+    const hint = provider === 'mimo' && mimoMode === 'voicedesign'
+      ? '音色设计模式需填写描述文本'
+      : provider === 'mimo' && mimoMode === 'voiceclone'
+        ? '音色复刻模式需上传/选择样本'
+        : '未配置音色';
+    return sendError(ws, hint, 'NO_VOICE');
   }
 
   // 缓存命中：分块读取并发送
@@ -220,8 +200,6 @@ async function streamSegment(ws, connId, novelId, segmentId, controller, force) 
     for await (const chunk of ttsService.synthesizeStream(segment.text, speaker, {
       speed,
       volume,
-      format: settings.tts.audioFormat,
-      sampleRate: settings.tts.sampleRate,
       signal: controller.signal,
     })) {
       if (controller.signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });

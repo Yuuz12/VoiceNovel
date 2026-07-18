@@ -153,7 +153,7 @@ window.NovelManager = (function () {
           Player.regenerate(seg.id);
           Utils.toast('正在重新生成音频...', 'info');
         },
-      }, '🔁');
+      }, '↻');
       // 对话段：可编辑的角色选择下拉；旁白段：无需绑定（不显示下拉）
       const charSelect = seg.type === 'dialog'
         ? (() => {
@@ -195,7 +195,7 @@ window.NovelManager = (function () {
           seg.type === 'dialog'
             ? Utils.el('span', { class: 'seg-type dialog' }, '对话')
             : Utils.el('span', { class: 'seg-type narration' }, '旁白'),
-          unbound ? Utils.el('span', { class: 'seg-unbound-flag' }, '⚠ 未绑定') : null,
+          unbound ? Utils.el('span', { class: 'seg-unbound-flag' }, '未绑定') : null,
           charSelect,
           regenBtn,
         ]),
@@ -222,7 +222,7 @@ window.NovelManager = (function () {
 
   /**
    * 局部更新单个段落 block 的绑定状态（不重建列表，保留滚动位置）
-   * 用于换绑角色后更新 unbound 高亮 + ⚠ 标记
+   * 用于换绑角色后更新 unbound 高亮 + 未绑定标记
    */
   function updateSegBlockBindingDOM(segId) {
     const block = Utils.$(`#segment-view .seg-block[data-seg-id="${segId}"]`);
@@ -231,11 +231,11 @@ window.NovelManager = (function () {
     if (!seg) return;
     const unbound = seg.type === 'dialog' && !seg.characterId;
     block.classList.toggle('unbound', unbound);
-    // 添加/移除 ⚠ 未绑定 标记（位于 seg-type 之后）
+    // 添加/移除 未绑定 标记（位于 seg-type 之后）
     let flag = block.querySelector('.seg-unbound-flag');
     if (unbound && !flag) {
       const segType = block.querySelector('.seg-type');
-      flag = Utils.el('span', { class: 'seg-unbound-flag' }, '⚠ 未绑定');
+      flag = Utils.el('span', { class: 'seg-unbound-flag' }, '未绑定');
       if (segType && segType.nextSibling) segType.parentNode.insertBefore(flag, segType.nextSibling);
       else if (segType) segType.parentNode.appendChild(flag);
     } else if (!unbound && flag) {
@@ -273,10 +273,10 @@ window.NovelManager = (function () {
     const bar = Utils.el('div', { class: 'player-bar' });
 
     const controls = Utils.el('div', { class: 'player-controls' }, [
-      Utils.el('button', { class: 'player-btn', id: 'btn-prev', onclick: () => Player.prev() }, '⏮'),
-      Utils.el('button', { class: 'player-btn play-btn', id: 'btn-play', onclick: () => Player.togglePlay() }, '▶'),
-      Utils.el('button', { class: 'player-btn', id: 'btn-next', onclick: () => Player.next() }, '⏭'),
-      Utils.el('button', { class: 'player-btn', id: 'btn-stop', onclick: () => Player.stop() }, '⏹'),
+      Utils.el('button', { class: 'player-btn', id: 'btn-prev', onclick: () => Player.prev() }, '◄◄'),
+      Utils.el('button', { class: 'player-btn play-btn', id: 'btn-play', onclick: () => Player.togglePlay() }, '►'),
+      Utils.el('button', { class: 'player-btn', id: 'btn-next', onclick: () => Player.next() }, '►►'),
+      Utils.el('button', { class: 'player-btn', id: 'btn-stop', onclick: () => Player.stop() }, '■'),
     ]);
 
     const info = Utils.el('div', { class: 'player-info' }, [
@@ -324,13 +324,13 @@ window.NovelManager = (function () {
     const playBtn = Utils.$('#btn-play');
     if (!playBtn) return;
     if (state.isFetching) {
-      playBtn.textContent = '⏳';
+      playBtn.textContent = '…';
       playBtn.disabled = true;
     } else if (state.isPlaying && !state.audioPaused) {
-      playBtn.textContent = '⏸';
+      playBtn.textContent = '‖';
       playBtn.disabled = false;
     } else {
-      playBtn.textContent = '▶';
+      playBtn.textContent = '►';
       playBtn.disabled = false;
     }
 
@@ -483,8 +483,8 @@ window.NovelManager = (function () {
     // 角色为空时提示先提取/新建；执意继续则 forceEmpty（所有段落 characterId=null）
     if (!hasChars) {
       const choice = confirm(
-        '当前没有角色，LLM 分段将无法绑定角色（所有对话段将显示 ⚠ 未绑定）。\n\n' +
-        '建议先点"🔍 LLM 提取角色"或"➕ 添加角色"建立角色列表。\n\n' +
+        '当前没有角色，LLM 分段将无法绑定角色（所有对话段将标记为未绑定）。\n\n' +
+        '建议先点"LLM 提取角色"或"添加角色"建立角色列表。\n\n' +
         '点"确定"仍要继续分段（全部不绑定）；点"取消"返回。'
       );
       if (!choice) return;
@@ -542,7 +542,7 @@ window.NovelManager = (function () {
             segLogCurrentLine = null;
             segLogCurrentRole = null;
           } else if (p.type === 'warn') {
-            appendSegLogLine('⚠ ' + (p.message || '警告'), 'warn');
+            appendSegLogLine('警告: ' + (p.message || '警告'), 'warn');
           }
         } else if (evt.event === 'error') {
           if (p.code === 'NO_CHARACTERS') {
@@ -550,7 +550,7 @@ window.NovelManager = (function () {
           } else {
             Utils.toast('分段错误: ' + (p.message || '未知错误'), 'error');
           }
-          appendSegLogLine('✖ 错误: ' + (p.message || '未知错误'), 'error');
+          appendSegLogLine('错误: ' + (p.message || '未知错误'), 'error');
         }
       }, segController.signal);
       // done
@@ -560,16 +560,16 @@ window.NovelManager = (function () {
         CharacterPanel.setNovel(currentNovel);
         renderDetail(currentNovel);
       }
-      appendSegLogLine('✓ 分段完成', 'ok');
+      appendSegLogLine('分段完成', 'ok');
       updateSegStatusBar('分段完成', { done: true });
       const unbound = (currentNovel.segments || []).filter((s) => s.type === 'dialog' && !s.characterId).length;
       const tip = unbound > 0
-        ? `LLM 分段完成: ${(currentNovel.segments || []).length} 段，${unbound} 个对话段未绑定角色（⚠ 标记）`
+        ? `LLM 分段完成: ${(currentNovel.segments || []).length} 段，${unbound} 个对话段未绑定角色（标记为未绑定）`
         : `LLM 智能分段完成: ${(currentNovel.segments || []).length} 段`;
       Utils.toast(tip, unbound > 0 ? 'info' : 'success');
     } catch (err) {
       if (err && (err.name === 'AbortError' || err.code === 'ABORTED')) {
-        appendSegLogLine('⏹ 已取消', 'cancel');
+        appendSegLogLine('已取消', 'cancel');
         // 取消：刷新已分段数据，显示继续按钮
         await refreshCurrent();
         try {
@@ -584,7 +584,7 @@ window.NovelManager = (function () {
           }
         } catch (_) { updateSegStatusBar('已取消', { done: true }); }
       } else {
-        appendSegLogLine('✖ 失败: ' + (err && err.message), 'error');
+        appendSegLogLine('失败: ' + (err && err.message), 'error');
         Utils.toast('分段失败: ' + (err && err.message), 'error');
         updateSegStatusBar('分段失败', { done: true });
       }
@@ -623,12 +623,12 @@ window.NovelManager = (function () {
     const hasLog = log && log.children.length > 0;
     if (hasLog || opts.showLog) {
       const toggleBtn = Utils.el('button', { class: 'btn btn-link btn-sm seg-log-toggle' },
-        (log && !log.classList.contains('hidden')) ? '📤 隐藏输出' : '📥 实时输出');
+        (log && !log.classList.contains('hidden')) ? '隐藏输出' : '实时输出');
       toggleBtn.addEventListener('click', () => {
         const lg = Utils.$('#seg-status-log');
         if (!lg) return;
         lg.classList.toggle('hidden');
-        toggleBtn.textContent = lg.classList.contains('hidden') ? '📥 实时输出' : '📤 隐藏输出';
+        toggleBtn.textContent = lg.classList.contains('hidden') ? '实时输出' : '隐藏输出';
         if (!lg.classList.contains('hidden')) lg.scrollTop = lg.scrollHeight;
       });
       line.appendChild(toggleBtn);
@@ -691,7 +691,7 @@ window.NovelManager = (function () {
     const log = Utils.$('#seg-status-log');
     if (!log) return;
     if (!segLogCurrentLine || segLogCurrentRole !== role) {
-      const prefix = role === 'reasoning' ? '💭 ' : '💬 ';
+      const prefix = role === 'reasoning' ? '[思考] ' : '[输出] ';
       segLogCurrentLine = Utils.el('div', { class: 'seg-log-line ' + role }, prefix);
       log.appendChild(segLogCurrentLine);
       segLogCurrentRole = role;
@@ -722,7 +722,6 @@ window.NovelManager = (function () {
       CharacterPanel.setNovel(null);
       Utils.$('#novel-content').innerHTML = `
         <div class="empty-state">
-          <div class="empty-icon">📖</div>
           <p>选择一本小说，或新建一本开始聆听</p>
         </div>`;
       await refreshList();

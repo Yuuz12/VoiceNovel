@@ -1,18 +1,48 @@
-// 设置面板：TTS / LLM / 旁白 / 分段 / 缓存
+// 设置面板：TTS（多 provider 切换）/ LLM / 旁白 / 分段 / 缓存
+// 支持火山方舟与小米 MIMO 两家 TTS 配置独立保存，切换不丢；MIMO 三模式：preset/voicedesign/voiceclone
 window.SettingsPanel = (function () {
-  let voiceGroups = {};
+  let voiceGroups = {};          // 当前 provider 的音色分组
   let dialogSymbols = [];
+  let lastSettings = {};         // 当前已加载设置（供 fillNarrationVoiceSelect 等读取）
+  let cloneSamples = [];         // 已上传复刻样本列表
+  let currentProvider = 'volcano';
+  let currentMimoMode = 'preset';
 
   async function init() {
+    // 先读一次设置，确定当前 provider/mode，再据此加载音色目录与样本
     try {
-      const data = await API.listVoices(true);
-      voiceGroups = (data && data.groups) || {};
+      const s = await API.getSettings();
+      lastSettings = s || {};
+      currentProvider = (s.tts && s.tts.provider) || 'volcano';
+      const mimo = (s.tts && s.tts.providers && s.tts.providers.mimo) || {};
+      currentMimoMode = mimo.mode || 'preset';
+    } catch (err) {
+      console.error('load settings failed', err);
+    }
+    try {
+      await loadVoices(currentProvider);
     } catch (err) {
       console.error('load voices failed', err);
+    }
+    try {
+      await loadCloneSamples();
+    } catch (err) {
+      console.error('load clone samples failed', err);
     }
     bindEvents();
     await load();
     await refreshCache();
+  }
+
+  async function loadVoices(provider) {
+    const data = await API.listVoices(true, provider || currentProvider);
+    voiceGroups = (data && data.groups) || {};
+  }
+
+  async function loadCloneSamples() {
+    const list = await API.listVoiceSamples();
+    // 后端返回 { samples: [...] }，兼容裸数组
+    cloneSamples = Array.isArray(list) ? list : (list && list.samples) || [];
   }
 
   function bindEvents() {
@@ -22,6 +52,22 @@ window.SettingsPanel = (function () {
     Utils.$('#btn-refresh-cache').addEventListener('click', refreshCache);
     Utils.$('#btn-clear-cache').addEventListener('click', clearCache);
     Utils.$('#btn-add-symbol').addEventListener('click', () => addSymbolRow('', ''));
+
+    // provider 切换
+    Utils.$$('input[name="tts-provider"]').forEach((radio) => {
+      radio.addEventListener('change', () => onProviderChange());
+    });
+    // MIMO 模式切换
+    Utils.$('#set-tts-mimo-mode').addEventListener('change', () => onMimoModeChange());
+    // 旁白克隆样本上传
+    Utils.$('#btn-narration-clone-upload').addEventListener('click', () => {
+      Utils.$('#set-narration-clone-file').click();
+    });
+    Utils.$('#set-narration-clone-file').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) uploadNarrationSample(file);
+      e.target.value = ''; // 允许重复选同一文件
+    });
 
     // 滑块值显示
     const speedSlider = Utils.$('#set-narration-speed');
@@ -42,29 +88,42 @@ window.SettingsPanel = (function () {
   }
 
   function fillForm(s) {
-    Utils.$('#set-tts-apikey').value = (s.tts && s.tts.apiKey) || '';
-    Utils.$('#set-tts-resource').value = (s.tts && s.tts.resourceId) || 'seed-tts-2.0';
-    Utils.$('#set-tts-baseurl').value = (s.tts && s.tts.baseUrl) || 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional';
-    Utils.$('#set-tts-format').value = (s.tts && s.tts.audioFormat) || 'mp3';
-    Utils.$('#set-tts-samplerate').value = String((s.tts && s.tts.sampleRate) || 24000);
+    lastSettings = s || {}; // 关键：先存，供 fillNarrationVoiceSelect/fillNarrationCloneSelect 读取
+    const tts = s.tts || {};
+    const providers = tts.providers || {};
+    const volcano = providers.volcano || {};
+    const mimo = providers.mimo || {};
 
+    // 火山方舟面板
+    Utils.$('#set-tts-volcano-apikey').value = volcano.apiKey || '';
+    Utils.$('#set-tts-volcano-resource').value = volcano.resourceId || 'seed-tts-2.0';
+    Utils.$('#set-tts-volcano-baseurl').value = volcano.baseUrl || 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional';
+    Utils.$('#set-tts-volcano-format').value = volcano.audioFormat || 'mp3';
+    Utils.$('#set-tts-volcano-samplerate').value = String(volcano.sampleRate || 24000);
+
+    // MIMO 面板
+    Utils.$('#set-tts-mimo-apikey').value = mimo.apiKey || '';
+    Utils.$('#set-tts-mimo-baseurl').value = mimo.baseUrl || 'https://api.xiaomimimo.com/v1/chat/completions';
+    Utils.$('#set-tts-mimo-mode').value = mimo.mode || 'preset';
+    Utils.$('#set-tts-mimo-format').value = mimo.audioFormat || 'mp3';
+    Utils.$('#set-tts-mimo-style').value = mimo.styleInstruction || '';
+
+    // provider radio
+    currentProvider = tts.provider || 'volcano';
+    currentMimoMode = mimo.mode || 'preset';
+    Utils.$$('input[name="tts-provider"]').forEach((r) => {
+      r.checked = (r.value === currentProvider);
+    });
+    applyProviderPanelVisibility();
+    renderNarrationVoiceArea();
+
+    // LLM
     Utils.$('#set-llm-baseurl').value = (s.llm && s.llm.baseUrl) || 'https://api.openai.com/v1';
     Utils.$('#set-llm-apikey').value = (s.llm && s.llm.apiKey) || '';
     Utils.$('#set-llm-model').value = (s.llm && s.llm.model) || 'gpt-4o-mini';
+    Utils.$('#set-llm-timeout').value = String((s.llm && s.llm.timeoutSeconds) || 300);
 
-    // 旁白音色下拉
-    const voiceSelect = Utils.$('#set-narration-voice');
-    voiceSelect.innerHTML = '';
-    for (const scenario of Object.keys(voiceGroups)) {
-      const optgroup = Utils.el('optgroup', { label: scenario });
-      for (const v of voiceGroups[scenario]) {
-        const opt = Utils.el('option', { value: v.id }, `${v.name} · ${v.style}`);
-        if ((s.narration && s.narration.voiceId) === v.id) opt.selected = true;
-        optgroup.appendChild(opt);
-      }
-      voiceSelect.appendChild(optgroup);
-    }
-
+    // 旁白语速/音量
     const speedSlider = Utils.$('#set-narration-speed');
     speedSlider.value = String((s.narration && s.narration.speed) || 0);
     Utils.$('#narration-speed-val').textContent = speedSlider.value;
@@ -82,6 +141,113 @@ window.SettingsPanel = (function () {
     Utils.$('#set-gap-ms').value = String((s.playback && s.playback.gapBetweenSegments) || 300);
   }
 
+  function applyProviderPanelVisibility() {
+    Utils.$('#tts-panel-volcano').hidden = (currentProvider !== 'volcano');
+    Utils.$('#tts-panel-mimo').hidden = (currentProvider !== 'mimo');
+  }
+
+  // 旁白音色区：按 provider + mimo mode 切换 preset/design/clone 三行
+  function renderNarrationVoiceArea() {
+    const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
+    const isMimoClone = (currentProvider === 'mimo' && currentMimoMode === 'voiceclone');
+    Utils.$('#narration-row-preset').hidden = isMimoDesign || isMimoClone;
+    Utils.$('#narration-row-design').hidden = !isMimoDesign;
+    Utils.$('#narration-row-clone').hidden = !isMimoClone;
+
+    if (!isMimoDesign && !isMimoClone) {
+      fillNarrationVoiceSelect();
+    } else if (isMimoDesign) {
+      const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+      Utils.$('#set-narration-design').value = narrMimo.designDescription || '';
+    } else if (isMimoClone) {
+      fillNarrationCloneSelect();
+    }
+  }
+
+  function fillNarrationVoiceSelect() {
+    const voiceSelect = Utils.$('#set-narration-voice');
+    voiceSelect.innerHTML = '';
+    const currentVoiceId = (lastSettings.narration && lastSettings.narration.voiceId) || '';
+    for (const scenario of Object.keys(voiceGroups)) {
+      const optgroup = Utils.el('optgroup', { label: scenario });
+      for (const v of voiceGroups[scenario]) {
+        const opt = Utils.el('option', { value: v.id }, `${v.name} · ${v.style}`);
+        if (currentVoiceId === v.id) opt.selected = true;
+        optgroup.appendChild(opt);
+      }
+      voiceSelect.appendChild(optgroup);
+    }
+  }
+
+  function fillNarrationCloneSelect() {
+    const sel = Utils.$('#set-narration-clone-select');
+    sel.innerHTML = '';
+    const placeholder = Utils.el('option', { value: '' }, '— 选择已上传样本 —');
+    sel.appendChild(placeholder);
+    const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+    const currentPath = narrMimo.cloneSamplePath || '';
+    let selectedName = '未选择';
+    for (const s of cloneSamples) {
+      const sizeStr = s.size != null ? ` (${Utils.formatBytes(s.size)})` : '';
+      const opt = Utils.el('option', { value: s.path }, `${s.name}${sizeStr}`);
+      if (currentPath && s.path === currentPath) {
+        opt.selected = true;
+        selectedName = s.name;
+      }
+      sel.appendChild(opt);
+    }
+    Utils.$('#narration-clone-name').textContent = selectedName;
+  }
+
+  async function onProviderChange() {
+    const checked = Utils.$('input[name="tts-provider"]:checked');
+    if (!checked) return;
+    currentProvider = checked.value;
+    applyProviderPanelVisibility();
+    // MIMO 模式可能因切换面板读到默认值，同步一下
+    if (currentProvider === 'mimo') {
+      currentMimoMode = Utils.$('#set-tts-mimo-mode').value || 'preset';
+    }
+    try { await loadVoices(currentProvider); } catch (err) { console.error('reload voices failed', err); }
+    renderNarrationVoiceArea();
+    if (window.CharacterPanel && CharacterPanel.refreshVoices) {
+      CharacterPanel.refreshVoices(currentProvider, currentMimoMode);
+    }
+  }
+
+  function onMimoModeChange() {
+    currentMimoMode = Utils.$('#set-tts-mimo-mode').value || 'preset';
+    renderNarrationVoiceArea();
+    if (window.CharacterPanel && CharacterPanel.refreshVoices) {
+      CharacterPanel.refreshVoices(currentProvider, currentMimoMode);
+    }
+  }
+
+  async function uploadNarrationSample(file) {
+    try {
+      const base64 = await fileToBase64(file);
+      await API.uploadVoiceSample(file.name, base64);
+      await loadCloneSamples();
+      fillNarrationCloneSelect();
+      Utils.toast(`样本 ${file.name} 上传成功`, 'success');
+    } catch (err) {
+      Utils.toast('样本上传失败: ' + err.message, 'error');
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const idx = result.indexOf(',');
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   function renderSymbolList() {
     const list = Utils.$('#dialog-symbols-list');
     list.innerHTML = '';
@@ -91,13 +257,12 @@ window.SettingsPanel = (function () {
         Utils.el('span', { class: 'arrow' }, '→'),
         Utils.el('input', { type: 'text', value: pair[1], maxlength: '4', dataset: { idx: String(idx), pos: '1' } }),
         Utils.el('button', {
-          class: 'btn btn-link btn-remove',
+          class: 'btn btn-danger btn-sm',
           onclick: () => { dialogSymbols.splice(idx, 1); renderSymbolList(); },
-        }, '✕ 删除'),
+        }, '删除'),
       ]);
       list.appendChild(row);
     });
-    // 监听输入
     Utils.$$('#dialog-symbols-list input').forEach((input) => {
       input.addEventListener('input', () => {
         const i = parseInt(input.dataset.idx, 10);
@@ -113,23 +278,54 @@ window.SettingsPanel = (function () {
   }
 
   function collectForm() {
+    const narrationMimo = {
+      designDescription: Utils.$('#set-narration-design').value.trim(),
+      cloneSamplePath: Utils.$('#set-narration-clone-select').value,
+    };
+    // 回填克隆样本显示名
+    const sel = Utils.$('#set-narration-clone-select');
+    if (sel.selectedIndex > 0) {
+      const opt = sel.options[sel.selectedIndex];
+      narrationMimo.cloneSampleName = opt ? opt.textContent : '';
+    } else {
+      narrationMimo.cloneSampleName = '';
+    }
     return {
       tts: {
-        apiKey: Utils.$('#set-tts-apikey').value.trim(),
-        resourceId: Utils.$('#set-tts-resource').value.trim() || 'seed-tts-2.0',
-        baseUrl: Utils.$('#set-tts-baseurl').value.trim() || 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
-        audioFormat: Utils.$('#set-tts-format').value,
-        sampleRate: parseInt(Utils.$('#set-tts-samplerate').value, 10),
+        provider: currentProvider,
+        providers: {
+          volcano: {
+            apiKey: Utils.$('#set-tts-volcano-apikey').value.trim(),
+            resourceId: Utils.$('#set-tts-volcano-resource').value.trim() || 'seed-tts-2.0',
+            baseUrl: Utils.$('#set-tts-volcano-baseurl').value.trim() || 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+            audioFormat: Utils.$('#set-tts-volcano-format').value,
+            sampleRate: parseInt(Utils.$('#set-tts-volcano-samplerate').value, 10),
+          },
+          mimo: {
+            apiKey: Utils.$('#set-tts-mimo-apikey').value.trim(),
+            baseUrl: Utils.$('#set-tts-mimo-baseurl').value.trim() || 'https://api.xiaomimimo.com/v1/chat/completions',
+            mode: Utils.$('#set-tts-mimo-mode').value,
+            audioFormat: Utils.$('#set-tts-mimo-format').value,
+            styleInstruction: Utils.$('#set-tts-mimo-style').value,
+          },
+        },
       },
       llm: {
         baseUrl: Utils.$('#set-llm-baseurl').value.trim() || 'https://api.openai.com/v1',
         apiKey: Utils.$('#set-llm-apikey').value.trim(),
         model: Utils.$('#set-llm-model').value.trim() || 'gpt-4o-mini',
+        timeoutSeconds: (() => {
+          const v = parseInt(Utils.$('#set-llm-timeout').value, 10);
+          if (!Number.isFinite(v) || v < 10) return 10;
+          if (v > 1800) return 1800;
+          return v;
+        })(),
       },
       narration: {
         voiceId: Utils.$('#set-narration-voice').value,
         speed: parseInt(Utils.$('#set-narration-speed').value, 10),
         volume: parseInt(Utils.$('#set-narration-volume').value, 10),
+        voiceConfig: { mimo: narrationMimo },
       },
       parsing: {
         dialogSymbols: dialogSymbols.filter((p) => p[0] && p[1]),
@@ -150,18 +346,20 @@ window.SettingsPanel = (function () {
     try {
       const s = collectForm();
       await API.saveSettings(s);
-      // 重新加载（应用 apiKey 掩码）
       const fresh = await API.getSettings();
       fillForm(fresh);
-      // 更新播放器间隔
       if (window.Player) Player.setGap(s.playback.gapBetweenSegments);
+      // provider/mode 可能因保存刷新，同步角色面板
+      if (window.CharacterPanel && CharacterPanel.refreshVoices) {
+        CharacterPanel.refreshVoices(currentProvider, currentMimoMode);
+      }
       showHint('#settings-save-result', '已保存', 'ok');
       Utils.toast('设置已保存', 'success');
     } catch (err) {
       showHint('#settings-save-result', '保存失败: ' + err.message, 'err');
     } finally {
       btn.disabled = false;
-      btn.textContent = '💾 保存设置';
+      btn.textContent = '保存设置';
     }
   }
 
@@ -170,7 +368,6 @@ window.SettingsPanel = (function () {
     btn.disabled = true;
     btn.textContent = '测试中...';
     showHint('#tts-test-result', '', '');
-    // 先保存当前 TTS 配置（让后端用最新的 key 测试）
     try {
       const s = collectForm();
       await API.saveSettings(s);
@@ -178,12 +375,12 @@ window.SettingsPanel = (function () {
       fillForm(fresh);
       const result = await API.testTts();
       if (result.ok) {
-        showHint('#tts-test-result', `✓ 连接成功（返回 ${Utils.formatBytes(result.size)} 音频）`, 'ok');
+        showHint('#tts-test-result', `连接成功（返回 ${Utils.formatBytes(result.size)} 音频）`, 'ok');
       } else {
-        showHint('#tts-test-result', '✗ ' + (result.error || '未知错误'), 'err');
+        showHint('#tts-test-result', (result.error || '未知错误'), 'err');
       }
     } catch (err) {
-      showHint('#tts-test-result', '✗ ' + err.message, 'err');
+      showHint('#tts-test-result', err.message, 'err');
     } finally {
       btn.disabled = false;
       btn.textContent = '测试连接';
@@ -191,12 +388,21 @@ window.SettingsPanel = (function () {
   }
 
   function previewNarration() {
-    const voiceId = Utils.$('#set-narration-voice').value;
-    if (!voiceId) {
-      Utils.toast('请选择旁白音色', 'error');
-      return;
+    // 按 provider + mode 算 speaker
+    let speaker = '';
+    const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
+    const isMimoClone = (currentProvider === 'mimo' && currentMimoMode === 'voiceclone');
+    if (isMimoDesign) {
+      speaker = Utils.$('#set-narration-design').value.trim();
+      if (!speaker) { Utils.toast('请填写音色设计描述', 'error'); return; }
+    } else if (isMimoClone) {
+      speaker = Utils.$('#set-narration-clone-select').value;
+      if (!speaker) { Utils.toast('请选择复刻样本', 'error'); return; }
+    } else {
+      speaker = Utils.$('#set-narration-voice').value;
+      if (!speaker) { Utils.toast('请选择旁白音色', 'error'); return; }
     }
-    const url = API.previewVoiceUrl(voiceId, '这是旁白音色的试听示例。沧海一声笑，滔滔两岸潮。',
+    const url = API.previewVoiceUrl(speaker, '这是旁白音色的试听示例。沧海一声笑，滔滔两岸潮。',
       parseInt(Utils.$('#set-narration-speed').value, 10),
       parseInt(Utils.$('#set-narration-volume').value, 10));
     const a = Utils.$('#preview-narration-audio');
@@ -231,5 +437,5 @@ window.SettingsPanel = (function () {
     el.className = 'result-hint' + (type ? ' ' + type : '');
   }
 
-  return { init, load };
+  return { init, load, getProvider: () => currentProvider, getMimoMode: () => currentMimoMode };
 })();

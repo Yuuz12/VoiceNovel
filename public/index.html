@@ -11,12 +11,11 @@
 <body>
   <header class="app-header">
     <div class="brand">
-      <span class="logo">🎙️</span>
       <h1>语音小说</h1>
     </div>
     <nav class="tabs">
-      <button class="tab active" data-view="library">📚 小说库</button>
-      <button class="tab" data-view="settings">⚙️ 设置</button>
+      <button class="tab active" data-view="library">小说库</button>
+      <button class="tab" data-view="settings">设置</button>
     </nav>
     <div class="header-status" id="header-status">
       <span class="status-dot" id="status-dot"></span>
@@ -39,7 +38,6 @@
 
       <section class="content-area" id="novel-content">
         <div class="empty-state">
-          <div class="empty-icon">📖</div>
           <p>选择一本小说，或新建一本开始聆听</p>
         </div>
       </section>
@@ -60,35 +58,79 @@
         <h2>全局设置</h2>
 
         <fieldset class="settings-section">
-          <legend>🔊 方舟 TTS 配置</legend>
+          <legend>TTS 服务配置</legend>
           <div class="form-row">
-            <label>API Key</label>
-            <input type="password" id="set-tts-apikey" placeholder="方舟 Agent Plan 专属 API Key" autocomplete="off" />
+            <label>服务</label>
+            <div class="provider-switch">
+              <label><input type="radio" name="tts-provider" value="volcano" checked> 火山方舟 TTS</label>
+              <label><input type="radio" name="tts-provider" value="mimo"> 小米 MIMO TTS</label>
+            </div>
           </div>
-          <div class="form-row">
-            <label>Resource ID</label>
-            <input type="text" id="set-tts-resource" placeholder="seed-tts-2.0" />
+
+          <!-- 火山方舟配置 -->
+          <div id="tts-panel-volcano" class="provider-panel">
+            <div class="form-row">
+              <label>API Key</label>
+              <input type="password" id="set-tts-volcano-apikey" placeholder="火山方舟 Agent Plan 专属 API Key" autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>Resource ID</label>
+              <input type="text" id="set-tts-volcano-resource" placeholder="seed-tts-2.0" />
+            </div>
+            <div class="form-row">
+              <label>Base URL（请填 Agent Plan 专属地址，避免额外费用）</label>
+              <input type="text" id="set-tts-volcano-baseurl" placeholder="https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional" />
+            </div>
+            <div class="form-row">
+              <label>音频格式</label>
+              <select id="set-tts-volcano-format">
+                <option value="mp3">mp3</option>
+                <option value="wav">wav</option>
+                <option value="pcm">pcm</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>采样率</label>
+              <select id="set-tts-volcano-samplerate">
+                <option value="24000">24000</option>
+                <option value="16000">16000</option>
+                <option value="8000">8000</option>
+              </select>
+            </div>
           </div>
-          <div class="form-row">
-            <label>Base URL（请填 Agent Plan 专属地址，避免额外费用）</label>
-            <input type="text" id="set-tts-baseurl" placeholder="https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional" />
+
+          <!-- 小米 MIMO 配置 -->
+          <div id="tts-panel-mimo" class="provider-panel" hidden>
+            <div class="form-row">
+              <label>API Key</label>
+              <input type="password" id="set-tts-mimo-apikey" placeholder="MIMO API Key" autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>Base URL</label>
+              <input type="text" id="set-tts-mimo-baseurl" placeholder="https://api.xiaomimimo.com/v1/chat/completions" />
+            </div>
+            <div class="form-row">
+              <label>合成模式</label>
+              <select id="set-tts-mimo-mode">
+                <option value="preset">预置精品音色（mimo-v2.5-tts）</option>
+                <option value="voicedesign">文本描述定制音色（voicedesign）</option>
+                <option value="voiceclone">音频样本复刻音色（voiceclone）</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>音频格式</label>
+              <select id="set-tts-mimo-format">
+                <option value="mp3">mp3</option>
+                <option value="wav">wav</option>
+                <option value="pcm">pcm</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>全局风格指令（可选，仅预置/复刻模式生效，放 role:user）</label>
+              <textarea id="set-tts-mimo-style" rows="2" placeholder="例：用低沉沙哑的嗓音，语气缓慢，带着疲惫"></textarea>
+            </div>
           </div>
-          <div class="form-row">
-            <label>音频格式</label>
-            <select id="set-tts-format">
-              <option value="mp3">mp3</option>
-              <option value="wav">wav</option>
-              <option value="pcm">pcm</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label>采样率</label>
-            <select id="set-tts-samplerate">
-              <option value="24000">24000</option>
-              <option value="16000">16000</option>
-              <option value="8000">8000</option>
-            </select>
-          </div>
+
           <div class="form-actions">
             <button class="btn btn-secondary" id="btn-test-tts">测试连接</button>
             <span id="tts-test-result" class="result-hint"></span>
@@ -96,7 +138,7 @@
         </fieldset>
 
         <fieldset class="settings-section">
-          <legend>🤖 LLM 配置（OpenAI 兼容，用于角色提取 / 智能分段 / 音色推荐）</legend>
+          <legend>LLM 配置（OpenAI 兼容，用于角色提取 / 智能分段 / 音色推荐）</legend>
           <div class="form-row">
             <label>Base URL</label>
             <input type="text" id="set-llm-baseurl" placeholder="https://api.openai.com/v1" />
@@ -109,13 +151,33 @@
             <label>Model</label>
             <input type="text" id="set-llm-model" placeholder="gpt-4o-mini" />
           </div>
+          <div class="form-row">
+            <label>请求超时（秒，单次请求级；长文本按块各自计时）</label>
+            <input type="number" id="set-llm-timeout" min="10" max="1800" step="10" placeholder="300" />
+          </div>
         </fieldset>
 
         <fieldset class="settings-section">
-          <legend>📖 旁白音色</legend>
-          <div class="form-row">
+          <legend>旁白音色</legend>
+          <!-- 预置模式：音色下拉（按 provider 取目录） -->
+          <div class="form-row" id="narration-row-preset">
             <label>音色</label>
             <select id="set-narration-voice"></select>
+          </div>
+          <!-- MIMO voicedesign 模式：文本描述 -->
+          <div class="form-row" id="narration-row-design" hidden>
+            <label>音色设计描述</label>
+            <textarea id="set-narration-design" rows="3" placeholder="例：低沉沙哑的老前辈，语气里带点由衷的敬佩，娓娓道来"></textarea>
+          </div>
+          <!-- MIMO voiceclone 模式：样本上传/选择 -->
+          <div class="form-row" id="narration-row-clone" hidden>
+            <label>复刻样本</label>
+            <div class="clone-sample-row">
+              <select id="set-narration-clone-select"><option value="">— 选择已上传样本 —</option></select>
+              <input type="file" id="set-narration-clone-file" accept="audio/mp3,audio/wav,audio/ogg,audio/m4a,audio/aac" hidden />
+              <button class="btn btn-secondary btn-sm" id="btn-narration-clone-upload">上传新样本</button>
+              <span id="narration-clone-name" class="result-hint">未选择</span>
+            </div>
           </div>
           <div class="form-row">
             <label>语速 <span class="value-tag" id="narration-speed-val">0</span></label>
@@ -126,13 +188,13 @@
             <input type="range" id="set-narration-volume" min="-50" max="100" value="0" />
           </div>
           <div class="form-actions">
-            <button class="btn btn-secondary" id="btn-preview-narration">▶ 试听</button>
+            <button class="btn btn-secondary" id="btn-preview-narration">试听</button>
             <audio id="preview-narration-audio" hidden></audio>
           </div>
         </fieldset>
 
         <fieldset class="settings-section">
-          <legend>✂️ 分段与解析</legend>
+          <legend>分段与解析</legend>
           <div class="form-row">
             <label>对话符号对</label>
             <div id="dialog-symbols-list" class="symbol-list"></div>
@@ -153,7 +215,7 @@
         </fieldset>
 
         <fieldset class="settings-section">
-          <legend>▶️ 播放</legend>
+          <legend>播放</legend>
           <div class="form-row">
             <label>段落间隔（毫秒）</label>
             <input type="number" id="set-gap-ms" min="0" max="3000" step="100" value="300" />
@@ -161,7 +223,7 @@
         </fieldset>
 
         <fieldset class="settings-section">
-          <legend>💾 音频缓存</legend>
+          <legend>音频缓存</legend>
           <div class="form-row">
             <label>当前缓存大小</label>
             <span id="cache-size-text">-</span>
@@ -173,7 +235,7 @@
         </fieldset>
 
         <div class="form-actions sticky-save">
-          <button class="btn btn-primary" id="btn-save-settings">💾 保存设置</button>
+          <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
           <span id="settings-save-result" class="result-hint"></span>
         </div>
       </div>
@@ -185,7 +247,7 @@
     <div class="modal-card">
       <div class="modal-head">
         <h3>新建小说</h3>
-        <button class="btn btn-icon" data-close-modal>✕</button>
+        <button class="btn btn-icon" data-close-modal>×</button>
       </div>
       <div class="modal-body">
         <div class="form-row">
