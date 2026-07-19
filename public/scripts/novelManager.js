@@ -268,21 +268,26 @@ window.NovelManager = (function () {
         Utils.el('div', { class: 'novel-title' }, n.title),
         Utils.el('div', { class: 'novel-meta' },
           `${n.segmentCount || 0} 段 · ${n.characterCount || 0} 角色 · ${n.rawTextLength || 0} 字`),
-        // 置于顶部按钮（不触发 openNovel）
-        Utils.el('button', {
-          class: 'btn btn-icon novel-pin-btn',
-          title: '置于顶部',
-          onclick: async (e) => {
-            e.stopPropagation();
-            try {
-              await API.pinToTop(n.id);
-              await refreshList();
-              Utils.toast('已置于顶部', 'success');
-            } catch (err) {
-              Utils.toast('操作失败: ' + err.message, 'error');
-            }
-          },
-        }, '↑'),
+        // 排到第一按钮（不触发 openNovel）：双箭头向上 SVG 图标
+        (() => {
+          const btn = Utils.el('button', {
+            class: 'btn btn-icon novel-pin-btn',
+            title: '排到第一',
+            'aria-label': '排到第一',
+            onclick: async (e) => {
+              e.stopPropagation();
+              try {
+                await API.moveToTop(n.id);
+                await refreshList();
+                Utils.toast('已排到第一', 'success');
+              } catch (err) {
+                Utils.toast('操作失败: ' + err.message, 'error');
+              }
+            },
+          });
+          btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 11h3v10h2V11h3l-4-4-4 4zM4 3v2h16V3H4z"/></svg>';
+          return btn;
+        })(),
       ]);
       ul.appendChild(li);
     }

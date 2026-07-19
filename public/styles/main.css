@@ -247,25 +247,37 @@ label {
   padding-left: 9px;
 }
 
-/* 置于顶部按钮：默认隐藏，hover 时显示在右侧 */
+/* 排到第一按钮：默认隐藏，hover 时显示在右侧 */
 .novel-list li .novel-pin-btn {
   position: absolute;
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
   opacity: 0;
-  transition: opacity 0.15s;
-  padding: 2px 6px;
-  font-size: 14px;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
   line-height: 1;
 }
+.novel-list li .novel-pin-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
+}
 .novel-list li:hover .novel-pin-btn {
-  opacity: 0.6;
+  opacity: 0.7;
 }
 .novel-list li .novel-pin-btn:hover {
   opacity: 1;
   color: var(--primary);
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--bg-elevated-2);
 }
 
 .novel-list li .novel-title {

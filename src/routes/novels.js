@@ -38,9 +38,16 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/novels/:id/pin-to-top - 置于顶部（单次操作，不影响 updatedAt）
+// POST /api/novels/:id/move-to-top - 排到第一（更新 updatedAt，按更新时间排序时排最前）
+router.post('/:id/move-to-top', (req, res) => {
+  const ok = novelService.moveToTop(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'novel not found' });
+  res.json({ ok: true });
+});
+
+// 兼容旧路径 /pin-to-top
 router.post('/:id/pin-to-top', (req, res) => {
-  const ok = novelService.pinToTop(req.params.id);
+  const ok = novelService.moveToTop(req.params.id);
   if (!ok) return res.status(404).json({ error: 'novel not found' });
   res.json({ ok: true });
 });

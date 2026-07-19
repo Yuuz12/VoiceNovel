@@ -44,7 +44,6 @@ function buildMetaFromNovel(n) {
     title: n.title,
     createdAt: n.createdAt,
     updatedAt: n.updatedAt,
-    pinnedToTopAt: n.pinnedToTopAt || null,
     segmentCount: (n.segments || []).length,
     characterCount: (n.characters || []).length,
     rawTextLength: (n.rawText || '').length,
@@ -115,19 +114,10 @@ function matchCharacterId(name, characters) {
 function listNovels() {
   // 使用元数据缓存，避免每次都同步读取所有小说完整 JSON
   // 首次调用懒加载，后续直接从内存 Map 读取（O(N) 数组化 + 排序，N 通常 < 20）
-  // 排序规则：
-  //   1. 有 pinnedToTopAt 的排前面（按 pinnedToTopAt 降序，最近操作的在最前）
-  //   2. 其余按 updatedAt 降序
+  // 排序规则：按 updatedAt 降序（最近更新的排最前）
   ensureMetaCache();
   const novels = Array.from(novelMetaCache.values());
-  novels.sort((a, b) => {
-    const pa = a.pinnedToTopAt || '';
-    const pb = b.pinnedToTopAt || '';
-    if (pa && pb) return pb.localeCompare(pa);
-    if (pa) return -1;
-    if (pb) return 1;
-    return (b.updatedAt || '').localeCompare(a.updatedAt || '');
-  });
+  novels.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   return novels;
 }
 
@@ -183,15 +173,16 @@ function deleteNovel(id) {
 }
 
 /**
- * 置于顶部（单次操作，不是永久置顶）
- * 设置 pinnedToTopAt = now，listNovels 排序时排到最前。
- * 该操作不修改 updatedAt，保留原有的更新时间排序语义。
+ * 排到第一：把指定小说移到列表最前面。
+ * 实现：将 updatedAt 设为当前时间（listNovels 按 updatedAt 降序排）。
+ * 这是一种"最近活跃"语义，不是永久置顶——其他小说后续更新会被挤下去。
+ * 同时清理历史遗留的 pinnedToTopAt 字段。
  */
-function pinToTop(id) {
+function moveToTop(id) {
   const novel = getNovel(id);
   if (!novel) return false;
-  novel.pinnedToTopAt = new Date().toISOString();
-  // 不走 saveNovel（会更新 updatedAt），仅写文件 + 更新缓存
+  novel.updatedAt = new Date().toISOString();
+  if (novel.pinnedToTopAt) delete novel.pinnedToTopAt;
   writeJson(novelPath(novel.id), novel);
   updateMetaCache(novel);
   return true;
@@ -874,7 +865,8 @@ module.exports = {
   updateNovel,
   deleteNovel,
   saveNovel,
-  pinToTop,
+  pinToTop: moveToTop,
+  moveToTop,
   segmentNovelRule,
   segmentNovelLLM,
   updateCharacter,
