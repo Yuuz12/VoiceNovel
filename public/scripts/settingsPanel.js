@@ -1,14 +1,22 @@
 // 设置面板：TTS（多 provider 切换）/ LLM / 旁白 / 分段 / 缓存
-// 支持火山方舟与小米 MIMO 两家 TTS 配置独立保存，切换不丢；MIMO 三模式：preset/voicedesign/voiceclone
+// 支持 5 家 TTS 配置独立保存：volcano / mimo / openai / minimax / bailian
+// 旁白音色按 provider 独立保存到 narration.perProvider，切换 provider 不丢
+// mimo/minimax/bailian 各支持 preset/voicedesign/voiceclone 三模式
 window.SettingsPanel = (function () {
   const DEFAULT_NARRATION_PREVIEW_TEXT = '这是旁白音色的试听示例。沧海一声笑，滔滔两岸潮。';
   const NARRATION_PREVIEW_TEXT_KEY = 'narration-preview-text';
 
+  // 有 mode 字段的 provider（preset/voicedesign/voiceclone）
+  const MODE_PROVIDERS = new Set(['mimo', 'minimax', 'bailian']);
+  const ALL_PROVIDERS = ['volcano', 'mimo', 'openai', 'minimax', 'bailian'];
+
   let voiceGroups = {};          // 当前 provider 的音色分组
   let dialogSymbols = [];
   let lastSettings = {};         // 当前已加载设置（供 fillNarrationVoiceSelect 等读取）
-  let cloneSamples = [];         // 已上传复刻样本列表
+  let cloneSamples = [];         // 已上传复刻样本列表（仅 MIMO voiceclone 用）
   let currentProvider = 'volcano';
+  // currentMimoMode 语义扩展为"当前 provider 的 mode"（对 mimo/minimax/bailian 有效；
+  // volcano/openai 无 mode 字段，统一视为 'preset'）。保留旧名以减少改动。
   let currentMimoMode = 'preset';
 
   function loadNarrationPreviewText() {
@@ -24,14 +32,21 @@ window.SettingsPanel = (function () {
     try { localStorage.setItem(NARRATION_PREVIEW_TEXT_KEY, text || ''); } catch (_) {}
   }
 
+  // 从 settings 读取当前 provider 的 mode（兼容所有 provider）
+  function readModeFromSettings(s) {
+    const provider = (s.tts && s.tts.provider) || 'volcano';
+    if (!MODE_PROVIDERS.has(provider)) return 'preset';
+    const cfg = (s.tts && s.tts.providers && s.tts.providers[provider]) || {};
+    return cfg.mode || 'preset';
+  }
+
   async function init() {
     // 先读一次设置，确定当前 provider/mode，再据此加载音色目录与样本
     try {
       const s = await API.getSettings();
       lastSettings = s || {};
       currentProvider = (s.tts && s.tts.provider) || 'volcano';
-      const mimo = (s.tts && s.tts.providers && s.tts.providers.mimo) || {};
-      currentMimoMode = mimo.mode || 'preset';
+      currentMimoMode = readModeFromSettings(s);
     } catch (err) {
       console.error('load settings failed', err);
     }
@@ -74,7 +89,10 @@ window.SettingsPanel = (function () {
       radio.addEventListener('change', () => onProviderChange());
     });
     // MIMO 模式切换
-    Utils.$('#set-tts-mimo-mode').addEventListener('change', () => onMimoModeChange());
+    Utils.$('#set-tts-mimo-mode').addEventListener('change', () => onProviderModeChange());
+    // MiniMax / 百炼 模式切换
+    Utils.$('#set-tts-minimax-mode').addEventListener('change', () => onProviderModeChange());
+    Utils.$('#set-tts-bailian-mode').addEventListener('change', () => onProviderModeChange());
     // 旁白克隆样本上传/删除
     Utils.$('#btn-narration-clone-upload').addEventListener('click', () => {
       Utils.$('#set-narration-clone-file').click();
@@ -128,6 +146,9 @@ window.SettingsPanel = (function () {
     const providers = tts.providers || {};
     const volcano = providers.volcano || {};
     const mimo = providers.mimo || {};
+    const openai = providers.openai || {};
+    const minimax = providers.minimax || {};
+    const bailian = providers.bailian || {};
 
     // 火山方舟面板
     Utils.$('#set-tts-volcano-apikey').value = volcano.apiKey || '';
@@ -143,9 +164,32 @@ window.SettingsPanel = (function () {
     Utils.$('#set-tts-mimo-format').value = mimo.audioFormat || 'mp3';
     Utils.$('#set-tts-mimo-style').value = mimo.styleInstruction || '';
 
+    // OpenAI 面板
+    Utils.$('#set-tts-openai-apikey').value = openai.apiKey || '';
+    Utils.$('#set-tts-openai-baseurl').value = openai.baseUrl || 'https://api.openai.com/v1/audio/speech';
+    Utils.$('#set-tts-openai-model').value = openai.model || 'gpt-4o-mini-tts';
+    Utils.$('#set-tts-openai-format').value = openai.audioFormat || 'mp3';
+    Utils.$('#set-tts-openai-instructions').value = openai.instructions || '';
+
+    // MiniMax 面板
+    Utils.$('#set-tts-minimax-apikey').value = minimax.apiKey || '';
+    Utils.$('#set-tts-minimax-baseurl').value = minimax.baseUrl || 'https://api.minimaxi.com/v1/t2a_v2';
+    Utils.$('#set-tts-minimax-model').value = minimax.model || 'speech-02-hd';
+    Utils.$('#set-tts-minimax-mode').value = minimax.mode || 'preset';
+    Utils.$('#set-tts-minimax-format').value = minimax.audioFormat || 'mp3';
+    Utils.$('#set-tts-minimax-samplerate').value = String(minimax.sampleRate || 32000);
+
+    // 百炼面板
+    Utils.$('#set-tts-bailian-apikey').value = bailian.apiKey || '';
+    Utils.$('#set-tts-bailian-baseurl').value = bailian.baseUrl || 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/text-to-audio';
+    Utils.$('#set-tts-bailian-model').value = bailian.model || 'cosyvoice-v3-flash';
+    Utils.$('#set-tts-bailian-mode').value = bailian.mode || 'preset';
+    Utils.$('#set-tts-bailian-format').value = bailian.audioFormat || 'mp3';
+    Utils.$('#set-tts-bailian-samplerate').value = String(bailian.sampleRate || 24000);
+
     // provider radio
     currentProvider = tts.provider || 'volcano';
-    currentMimoMode = mimo.mode || 'preset';
+    currentMimoMode = readModeFromSettings(s);
     Utils.$$('input[name="tts-provider"]').forEach((r) => {
       r.checked = (r.value === currentProvider);
     });
@@ -158,7 +202,7 @@ window.SettingsPanel = (function () {
     Utils.$('#set-llm-model').value = (s.llm && s.llm.model) || 'gpt-4o-mini';
     Utils.$('#set-llm-timeout').value = String((s.llm && s.llm.timeoutSeconds) || 300);
 
-    // 旁白语速/音量
+    // 旁白语速/音量（全局共享，不按 provider）
     const speedSlider = Utils.$('#set-narration-speed');
     speedSlider.value = String((s.narration && s.narration.speed) || 0);
     Utils.$('#narration-speed-val').textContent = speedSlider.value;
@@ -182,30 +226,61 @@ window.SettingsPanel = (function () {
   function applyProviderPanelVisibility() {
     Utils.$('#tts-panel-volcano').hidden = (currentProvider !== 'volcano');
     Utils.$('#tts-panel-mimo').hidden = (currentProvider !== 'mimo');
+    Utils.$('#tts-panel-openai').hidden = (currentProvider !== 'openai');
+    Utils.$('#tts-panel-minimax').hidden = (currentProvider !== 'minimax');
+    Utils.$('#tts-panel-bailian').hidden = (currentProvider !== 'bailian');
   }
 
-  // 旁白音色区：按 provider + mimo mode 切换 preset/design/clone 三行
+  // 取当前 provider 的 mode 下拉值（仅对 mimo/minimax/bailian 有意义）
+  function getCurrentModeFromUI() {
+    if (currentProvider === 'mimo') return Utils.$('#set-tts-mimo-mode').value || 'preset';
+    if (currentProvider === 'minimax') return Utils.$('#set-tts-minimax-mode').value || 'preset';
+    if (currentProvider === 'bailian') return Utils.$('#set-tts-bailian-mode').value || 'preset';
+    return 'preset';
+  }
+
+  // 取旁白 perProvider[provider] 配置（容错旧结构）
+  function getNarrationPerProvider(provider) {
+    const pp = (lastSettings.narration && lastSettings.narration.perProvider) || {};
+    return pp[provider] || {};
+  }
+
+  // 旁白音色区：按 provider + mode 切换显隐
+  //   volcano/openai/*-preset → 只显示 #narration-row-preset
+  //   mimo voicedesign        → #narration-row-design
+  //   mimo voiceclone         → #narration-row-clone
+  //   minimax/bailian voicedesign|voiceclone → #narration-row-voiceid
   function renderNarrationVoiceArea() {
     const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
     const isMimoClone = (currentProvider === 'mimo' && currentMimoMode === 'voiceclone');
-    Utils.$('#narration-row-preset').hidden = isMimoDesign || isMimoClone;
+    const isVoiceIdMode = ((currentProvider === 'minimax' || currentProvider === 'bailian') &&
+      (currentMimoMode === 'voicedesign' || currentMimoMode === 'voiceclone'));
+    const isPresetRow = !isMimoDesign && !isMimoClone && !isVoiceIdMode;
+
+    Utils.$('#narration-row-preset').hidden = !isPresetRow;
     Utils.$('#narration-row-design').hidden = !isMimoDesign;
     Utils.$('#narration-row-clone').hidden = !isMimoClone;
+    Utils.$('#narration-row-voiceid').hidden = !isVoiceIdMode;
 
-    if (!isMimoDesign && !isMimoClone) {
+    if (isPresetRow) {
       fillNarrationVoiceSelect();
     } else if (isMimoDesign) {
-      const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+      const narrMimo = getNarrationPerProvider('mimo');
       Utils.$('#set-narration-design').value = narrMimo.designDescription || '';
     } else if (isMimoClone) {
       fillNarrationCloneSelect();
+    } else if (isVoiceIdMode) {
+      const narrP = getNarrationPerProvider(currentProvider);
+      Utils.$('#set-narration-voiceid').value = narrP.cloneVoiceId || '';
     }
   }
 
   function fillNarrationVoiceSelect() {
     const voiceSelect = Utils.$('#set-narration-voice');
     voiceSelect.innerHTML = '';
-    const currentVoiceId = (lastSettings.narration && lastSettings.narration.voiceId) || '';
+    // 从 perProvider[currentProvider].voiceId 读取（替代旧 narration.voiceId）
+    const narrP = getNarrationPerProvider(currentProvider);
+    const currentVoiceId = narrP.voiceId || '';
     for (const scenario of Object.keys(voiceGroups)) {
       const optgroup = Utils.el('optgroup', { label: scenario });
       for (const v of voiceGroups[scenario]) {
@@ -222,7 +297,7 @@ window.SettingsPanel = (function () {
     sel.innerHTML = '';
     const placeholder = Utils.el('option', { value: '' }, '— 选择已上传样本 —');
     sel.appendChild(placeholder);
-    const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+    const narrMimo = getNarrationPerProvider('mimo');
     const currentPath = narrMimo.cloneSamplePath || '';
     let selectedName = '未选择';
     for (const s of cloneSamples) {
@@ -242,10 +317,8 @@ window.SettingsPanel = (function () {
     if (!checked) return;
     currentProvider = checked.value;
     applyProviderPanelVisibility();
-    // MIMO 模式可能因切换面板读到默认值，同步一下
-    if (currentProvider === 'mimo') {
-      currentMimoMode = Utils.$('#set-tts-mimo-mode').value || 'preset';
-    }
+    // 切换 provider 后从对应 mode 下拉同步 currentMimoMode
+    currentMimoMode = getCurrentModeFromUI();
     try { await loadVoices(currentProvider); } catch (err) { console.error('reload voices failed', err); }
     renderNarrationVoiceArea();
     if (window.CharacterPanel && CharacterPanel.refreshVoices) {
@@ -253,8 +326,9 @@ window.SettingsPanel = (function () {
     }
   }
 
-  function onMimoModeChange() {
-    currentMimoMode = Utils.$('#set-tts-mimo-mode').value || 'preset';
+  // 统一处理 mimo/minimax/bailian 的 mode 下拉变化
+  function onProviderModeChange() {
+    currentMimoMode = getCurrentModeFromUI();
     renderNarrationVoiceArea();
     if (window.CharacterPanel && CharacterPanel.refreshVoices) {
       CharacterPanel.refreshVoices(currentProvider, currentMimoMode);
@@ -288,7 +362,7 @@ window.SettingsPanel = (function () {
       await API.deleteVoiceSample(path);
       await loadCloneSamples();
       // 若当前旁白绑定的是被删样本，清空选中并保存
-      const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+      const narrMimo = getNarrationPerProvider('mimo');
       if (narrMimo.cloneSamplePath === path) {
         sel.value = '';
         try { await ensureSaved(); } catch (err) { console.error('clear narration binding failed', err); }
@@ -309,7 +383,7 @@ window.SettingsPanel = (function () {
     if (!deletedPath) return;
     await loadCloneSamples();
     const sel = Utils.$('#set-narration-clone-select');
-    const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+    const narrMimo = getNarrationPerProvider('mimo');
     if (narrMimo.cloneSamplePath === deletedPath) {
       sel.value = '';
       try { await ensureSaved(); } catch (err) { console.error('clear narration binding failed', err); }
@@ -360,18 +434,49 @@ window.SettingsPanel = (function () {
   }
 
   function collectForm() {
-    const narrationMimo = {
-      designDescription: Utils.$('#set-narration-design').value.trim(),
-      cloneSamplePath: Utils.$('#set-narration-clone-select').value,
+    // 旁白 perProvider：从 lastSettings 读取旧值作为基础，只覆盖当前 provider 的当前 mode 字段
+    // 这样切换 provider 后保存不会丢失其他 provider 的旁白音色配置
+    const oldPP = (lastSettings.narration && lastSettings.narration.perProvider) || {};
+    const perProvider = {
+      volcano: { ...oldPP.volcano },
+      mimo: { ...oldPP.mimo },
+      openai: { ...oldPP.openai },
+      minimax: { ...oldPP.minimax },
+      bailian: { ...oldPP.bailian },
     };
-    // 回填克隆样本显示名
-    const sel = Utils.$('#set-narration-clone-select');
-    if (sel.selectedIndex > 0) {
-      const opt = sel.options[sel.selectedIndex];
-      narrationMimo.cloneSampleName = opt ? opt.textContent : '';
-    } else {
-      narrationMimo.cloneSampleName = '';
+
+    // 根据当前 provider + mode 收集表单中的旁白音色值
+    const presetVoiceId = Utils.$('#set-narration-voice').value;
+    const designDesc = Utils.$('#set-narration-design').value.trim();
+    const cloneSel = Utils.$('#set-narration-clone-select');
+    const clonePath = cloneSel.value;
+    let cloneName = '';
+    if (cloneSel.selectedIndex > 0) {
+      const opt = cloneSel.options[cloneSel.selectedIndex];
+      cloneName = opt ? opt.textContent : '';
     }
+    const voiceIdInput = Utils.$('#set-narration-voiceid').value.trim();
+
+    if (currentProvider === 'volcano' || currentProvider === 'openai') {
+      // preset 模式：覆盖当前 provider 的 voiceId
+      perProvider[currentProvider] = { ...perProvider[currentProvider], voiceId: presetVoiceId };
+    } else if (currentProvider === 'mimo') {
+      if (currentMimoMode === 'voicedesign') {
+        perProvider.mimo = { ...perProvider.mimo, designDescription: designDesc };
+      } else if (currentMimoMode === 'voiceclone') {
+        perProvider.mimo = { ...perProvider.mimo, cloneSamplePath: clonePath, cloneSampleName: cloneName };
+      } else {
+        perProvider.mimo = { ...perProvider.mimo, voiceId: presetVoiceId };
+      }
+    } else if (currentProvider === 'minimax' || currentProvider === 'bailian') {
+      if (currentMimoMode === 'voicedesign' || currentMimoMode === 'voiceclone') {
+        // voicedesign/voiceclone 共用 cloneVoiceId 字段
+        perProvider[currentProvider] = { ...perProvider[currentProvider], cloneVoiceId: voiceIdInput };
+      } else {
+        perProvider[currentProvider] = { ...perProvider[currentProvider], voiceId: presetVoiceId };
+      }
+    }
+
     return {
       tts: {
         provider: currentProvider,
@@ -390,6 +495,29 @@ window.SettingsPanel = (function () {
             audioFormat: Utils.$('#set-tts-mimo-format').value,
             styleInstruction: Utils.$('#set-tts-mimo-style').value,
           },
+          openai: {
+            apiKey: Utils.$('#set-tts-openai-apikey').value.trim(),
+            baseUrl: Utils.$('#set-tts-openai-baseurl').value.trim() || 'https://api.openai.com/v1/audio/speech',
+            model: Utils.$('#set-tts-openai-model').value,
+            audioFormat: Utils.$('#set-tts-openai-format').value,
+            instructions: Utils.$('#set-tts-openai-instructions').value,
+          },
+          minimax: {
+            apiKey: Utils.$('#set-tts-minimax-apikey').value.trim(),
+            baseUrl: Utils.$('#set-tts-minimax-baseurl').value.trim() || 'https://api.minimaxi.com/v1/t2a_v2',
+            model: Utils.$('#set-tts-minimax-model').value.trim() || 'speech-02-hd',
+            mode: Utils.$('#set-tts-minimax-mode').value,
+            audioFormat: Utils.$('#set-tts-minimax-format').value,
+            sampleRate: parseInt(Utils.$('#set-tts-minimax-samplerate').value, 10),
+          },
+          bailian: {
+            apiKey: Utils.$('#set-tts-bailian-apikey').value.trim(),
+            baseUrl: Utils.$('#set-tts-bailian-baseurl').value.trim() || 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/text-to-audio',
+            model: Utils.$('#set-tts-bailian-model').value.trim() || 'cosyvoice-v3-flash',
+            mode: Utils.$('#set-tts-bailian-mode').value,
+            audioFormat: Utils.$('#set-tts-bailian-format').value,
+            sampleRate: parseInt(Utils.$('#set-tts-bailian-samplerate').value, 10),
+          },
         },
       },
       llm: {
@@ -404,10 +532,9 @@ window.SettingsPanel = (function () {
         })(),
       },
       narration: {
-        voiceId: Utils.$('#set-narration-voice').value,
         speed: parseInt(Utils.$('#set-narration-speed').value, 10),
         volume: parseInt(Utils.$('#set-narration-volume').value, 10),
-        voiceConfig: { mimo: narrationMimo },
+        perProvider,
       },
       parsing: {
         dialogSymbols: dialogSymbols.filter((p) => p[0] && p[1]),
@@ -499,12 +626,17 @@ window.SettingsPanel = (function () {
     let speaker = '';
     const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
     const isMimoClone = (currentProvider === 'mimo' && currentMimoMode === 'voiceclone');
+    const isVoiceIdMode = ((currentProvider === 'minimax' || currentProvider === 'bailian') &&
+      (currentMimoMode === 'voicedesign' || currentMimoMode === 'voiceclone'));
     if (isMimoDesign) {
       speaker = Utils.$('#set-narration-design').value.trim();
       if (!speaker) { Utils.toast('请填写音色设计描述', 'error'); return; }
     } else if (isMimoClone) {
       speaker = Utils.$('#set-narration-clone-select').value;
       if (!speaker) { Utils.toast('请选择复刻样本', 'error'); return; }
+    } else if (isVoiceIdMode) {
+      speaker = Utils.$('#set-narration-voiceid').value.trim();
+      if (!speaker) { Utils.toast('请填写 voice_id', 'error'); return; }
     } else {
       speaker = Utils.$('#set-narration-voice').value;
       if (!speaker) { Utils.toast('请选择旁白音色', 'error'); return; }

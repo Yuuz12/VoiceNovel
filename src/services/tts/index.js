@@ -1,12 +1,16 @@
 // TTS Provider 调度器
 // 读 settings.tts.provider，分发到对应 provider 实现。
+// 支持 5 个 provider：volcano / mimo / openai / minimax / bailian
 // 导出与旧 TTSService.js 同名的 { TTSError, synthesizeStream, synthesize }，调用方零改动。
 const settingsService = require('../settingsService');
 const { TTSError } = require('./ttsError');
 const volcano = require('./volcanoProvider');
 const mimo = require('./mimoProvider');
+const openai = require('./openaiProvider');
+const minimax = require('./minimaxProvider');
+const bailian = require('./bailianProvider');
 
-const PROVIDERS = { volcano, mimo };
+const PROVIDERS = { volcano, mimo, openai, minimax, bailian };
 
 function getProvider(name) {
   const settings = settingsService.get();

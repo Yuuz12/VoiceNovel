@@ -64,6 +64,9 @@
             <div class="provider-switch">
               <label><input type="radio" name="tts-provider" value="volcano" checked> 火山方舟 TTS</label>
               <label><input type="radio" name="tts-provider" value="mimo"> 小米 MIMO TTS</label>
+              <label><input type="radio" name="tts-provider" value="openai"> OpenAI TTS</label>
+              <label><input type="radio" name="tts-provider" value="minimax"> MiniMax TTS</label>
+              <label><input type="radio" name="tts-provider" value="bailian"> 阿里云百炼 TTS</label>
             </div>
           </div>
 
@@ -131,6 +134,121 @@
             </div>
           </div>
 
+          <!-- OpenAI 配置 -->
+          <div id="tts-panel-openai" class="provider-panel" hidden>
+            <div class="form-row">
+              <label>API Key</label>
+              <input type="password" id="set-tts-openai-apikey" placeholder="sk-..." autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>Base URL</label>
+              <input type="text" id="set-tts-openai-baseurl" placeholder="https://api.openai.com/v1/audio/speech" />
+            </div>
+            <div class="form-row">
+              <label>Model</label>
+              <select id="set-tts-openai-model">
+                <option value="gpt-4o-mini-tts">gpt-4o-mini-tts（支持 instructions 指令式音色设计）</option>
+                <option value="tts-1">tts-1（标准，仅前 9 个音色）</option>
+                <option value="tts-1-hd">tts-1-hd（高清，仅前 9 个音色）</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>音频格式</label>
+              <select id="set-tts-openai-format">
+                <option value="mp3">mp3</option>
+                <option value="opus">opus</option>
+                <option value="aac">aac</option>
+                <option value="flac">flac</option>
+                <option value="wav">wav</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>全局 instructions（可选，仅 gpt-4o-mini-tts 生效，控制音色风格/情感）</label>
+              <textarea id="set-tts-openai-instructions" rows="2" placeholder="例：用低沉缓慢的嗓音，语气里带着疲惫和沧桑"></textarea>
+            </div>
+          </div>
+
+          <!-- MiniMax 配置 -->
+          <div id="tts-panel-minimax" class="provider-panel" hidden>
+            <div class="form-row">
+              <label>API Key</label>
+              <input type="password" id="set-tts-minimax-apikey" placeholder="MiniMax API Key" autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>Base URL</label>
+              <input type="text" id="set-tts-minimax-baseurl" placeholder="https://api.minimaxi.com/v1/t2a_v2" />
+            </div>
+            <div class="form-row">
+              <label>Model</label>
+              <input type="text" id="set-tts-minimax-model" placeholder="speech-02-hd" />
+            </div>
+            <div class="form-row">
+              <label>合成模式</label>
+              <select id="set-tts-minimax-mode">
+                <option value="preset">预置音色（系统音色 id）</option>
+                <option value="voicedesign">设计音色（填入 voice_design 生成的 voice_id）</option>
+                <option value="voiceclone">复刻音色（填入复刻获得的 voice_id）</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>音频格式</label>
+              <select id="set-tts-minimax-format">
+                <option value="mp3">mp3</option>
+                <option value="wav">wav</option>
+                <option value="pcm">pcm</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>采样率</label>
+              <select id="set-tts-minimax-samplerate">
+                <option value="32000">32000</option>
+                <option value="24000">24000</option>
+                <option value="16000">16000</option>
+                <option value="8000">8000</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 阿里云百炼配置 -->
+          <div id="tts-panel-bailian" class="provider-panel" hidden>
+            <div class="form-row">
+              <label>API Key（DASHSCOPE_API_KEY）</label>
+              <input type="password" id="set-tts-bailian-apikey" placeholder="sk-..." autocomplete="off" />
+            </div>
+            <div class="form-row">
+              <label>Base URL</label>
+              <input type="text" id="set-tts-bailian-baseurl" placeholder="https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/text-to-audio" />
+            </div>
+            <div class="form-row">
+              <label>Model</label>
+              <input type="text" id="set-tts-bailian-model" placeholder="cosyvoice-v3-flash" />
+            </div>
+            <div class="form-row">
+              <label>合成模式</label>
+              <select id="set-tts-bailian-mode">
+                <option value="preset">预置音色（CosyVoice 系统音色）</option>
+                <option value="voicedesign">设计音色（填入声音设计生成的 voice_id）</option>
+                <option value="voiceclone">复刻音色（填入复刻获得的 voice_id）</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>音频格式</label>
+              <select id="set-tts-bailian-format">
+                <option value="mp3">mp3</option>
+                <option value="wav">wav</option>
+                <option value="pcm">pcm</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>采样率</label>
+              <select id="set-tts-bailian-samplerate">
+                <option value="24000">24000</option>
+                <option value="16000">16000</option>
+                <option value="8000">8000</option>
+              </select>
+            </div>
+          </div>
+
           <div class="form-actions">
             <button class="btn btn-secondary" id="btn-test-tts">测试连接</button>
             <span id="tts-test-result" class="result-hint"></span>
@@ -178,6 +296,14 @@
               <button class="btn btn-secondary btn-sm" id="btn-narration-clone-upload">上传新样本</button>
               <button class="btn btn-danger btn-sm" id="btn-narration-clone-delete">删除样本</button>
               <span id="narration-clone-name" class="result-hint">未选择</span>
+            </div>
+          </div>
+          <!-- MiniMax/百炼 voicedesign|voiceclone 模式：voice_id 输入框 -->
+          <div class="form-row" id="narration-row-voiceid" hidden>
+            <label>音色 voice_id</label>
+            <div class="voiceid-row">
+              <input type="text" id="set-narration-voiceid" placeholder="填入在 MiniMax/百炼平台预先生成或复刻的 voice_id" />
+              <span class="result-hint">从对应平台控制台获取 voice_id 后填入</span>
             </div>
           </div>
           <div class="form-row">

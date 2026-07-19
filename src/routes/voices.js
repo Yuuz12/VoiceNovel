@@ -12,16 +12,17 @@ const {
 } = require('../config/voices');
 
 // 解析 provider 查询参数：优先 ?provider=，否则取当前 settings.tts.provider
+const ALLOWED_PROVIDERS = new Set(['volcano', 'mimo', 'openai', 'minimax', 'bailian']);
 function resolveProvider(req) {
   const q = req.query.provider;
-  if (q === 'volcano' || q === 'mimo') return q;
+  if (q && ALLOWED_PROVIDERS.has(q)) return q;
   const settings = settingsService.get();
   return (settings.tts && settings.tts.provider) || 'volcano';
 }
 
 // GET /api/voices - 列出所有音色
 //   ?grouped=1          按场景分组
-//   ?provider=volcano|mimo  指定 provider（默认取当前设置）
+//   ?provider=volcano|mimo|openai|minimax|bailian  指定 provider（默认取当前设置）
 router.get('/', (req, res) => {
   const provider = resolveProvider(req);
   if (req.query.grouped === '1') {

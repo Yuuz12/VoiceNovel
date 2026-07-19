@@ -1,19 +1,32 @@
-// 角色面板：显示角色列表、配置音色（按 provider + mimo mode 动态渲染）、LLM 提取/匹配
+// 角色面板：显示角色列表、配置音色（按 provider + mode 动态渲染）、LLM 提取/匹配
+// 支持 5 provider：volcano / mimo / openai / minimax / bailian
+// mimo/minimax/bailian 各支持 preset/voicedesign/voiceclone 三模式
 window.CharacterPanel = (function () {
+  // 有 mode 字段的 provider
+  const MODE_PROVIDERS = new Set(['mimo', 'minimax', 'bailian']);
+
   let currentNovel = null;
   let voiceGroups = {};
   let voiceCatalog = [];   // 扁平化的音色列表，用于 O(1) 查找音色名
   let cloneSamples = [];
   let currentProvider = 'volcano';
+  // currentMimoMode 语义扩展为"当前 provider 的 mode"（对 mimo/minimax/bailian 有效）
   let currentMimoMode = 'preset';
+
+  // 从 settings 读取当前 provider 的 mode
+  function readModeFromSettings(s) {
+    const provider = (s.tts && s.tts.provider) || 'volcano';
+    if (!MODE_PROVIDERS.has(provider)) return 'preset';
+    const cfg = (s.tts && s.tts.providers && s.tts.providers[provider]) || {};
+    return cfg.mode || 'preset';
+  }
 
   async function init() {
     // 自取设置确定 provider/mode（app.js 用 Promise.all 并行 init，不能依赖 SettingsPanel 先完成）
     try {
       const s = await API.getSettings();
       currentProvider = (s.tts && s.tts.provider) || 'volcano';
-      const mimo = (s.tts && s.tts.providers && s.tts.providers.mimo) || {};
-      currentMimoMode = mimo.mode || 'preset';
+      currentMimoMode = readModeFromSettings(s);
     } catch (err) {
       console.error('load settings failed', err);
     }
@@ -64,7 +77,7 @@ window.CharacterPanel = (function () {
     }
 
     const chars = (currentNovel.characters || []).slice().sort((a, b) => b.appearances - a.appearances);
-    const modeLabel = currentProvider === 'mimo' ? ` · MIMO/${currentMimoMode}` : '';
+    const modeLabel = MODE_PROVIDERS.has(currentProvider) ? ` · ${currentProvider}/${currentMimoMode}` : ` · ${currentProvider}`;
     head.innerHTML = `<h2>角色音色 (${chars.length}${modeLabel})</h2>`;
 
     const actions = Utils.el('div', { class: 'panel-actions' }, [
@@ -200,6 +213,13 @@ window.CharacterPanel = (function () {
     return (c.voiceConfig && c.voiceConfig.mimo) || {};
   }
 
+  // 通用 helper：取角色在指定 provider 下的配置子对象
+  // mimo/minimax/bailian 各自有独立子对象；volcano/openai 无子对象（直接用 voiceId）
+  function getCharProviderConfig(c, provider) {
+    if (!c || !c.voiceConfig) return {};
+    return c.voiceConfig[provider] || (provider === 'mimo' ? (c.voiceConfig.mimo || {}) : {});
+  }
+
   function renderCard(c) {
     const card = Utils.el('div', { class: 'character-card', dataset: { cid: c.id } });
 
@@ -304,6 +324,9 @@ window.CharacterPanel = (function () {
   function renderVoiceArea(c) {
     const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
     const isMimoClone = (currentProvider === 'mimo' && currentMimoMode === 'voiceclone');
+    // minimax/bailian voicedesign|voiceclone 共用 voice_id 输入框（保存到 voiceConfig[provider].cloneVoiceId）
+    const isVoiceIdMode = ((currentProvider === 'minimax' || currentProvider === 'bailian') &&
+      (currentMimoMode === 'voicedesign' || currentMimoMode === 'voiceclone'));
 
     if (isMimoDesign) {
       // 文本描述定制音色：textarea
@@ -389,7 +412,31 @@ window.CharacterPanel = (function () {
       return wrap;
     }
 
-    // preset / volcano：懒加载触发按钮（点击才创建 select，避免 100 角色 × 100 音色 = 1 万 option）
+    if (isVoiceIdMode) {
+      // MiniMax/百炼 voicedesign|voiceclone：voice_id 输入框
+      // 保存到 c.voiceConfig[provider].cloneVoiceId
+      const cfg = getCharProviderConfig(c, currentProvider);
+      const input = Utils.el('input', {
+        type: 'text',
+        class: 'char-voiceid-input',
+        placeholder: currentMimoMode === 'voicedesign'
+          ? '填入 voice_design 生成的 voice_id'
+          : '填入复刻获得的 voice_id',
+        value: cfg.cloneVoiceId || '',
+      });
+      input.style.width = '100%';
+      input.addEventListener('change', Utils.debounce(() => {
+        const v = input.value.trim();
+        c.voiceConfig = c.voiceConfig || {};
+        c.voiceConfig[currentProvider] = c.voiceConfig[currentProvider] || {};
+        c.voiceConfig[currentProvider].cloneVoiceId = v;
+        updateCharacter(c.id, { voiceConfig: { [currentProvider]: { cloneVoiceId: v } } });
+      }, 400));
+      const wrap = Utils.el('div', { class: 'char-voiceid-row' }, [input]);
+      return wrap;
+    }
+
+    // preset / volcano / openai：懒加载触发按钮（点击才创建 select，避免 100 角色 × 100 音色 = 1 万 option）
     return renderVoiceTrigger(c);
   }
 

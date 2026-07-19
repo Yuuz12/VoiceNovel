@@ -144,9 +144,105 @@ const MIMO_VOICES = [
   { id: 'Dean', name: 'Dean', gender: 'male', scenario: 'English Voices', style: 'Steady Gentle', age: 'middle', tags: ['English', 'Male', 'Steady', 'MIMO'] },
 ];
 
+// ========== OpenAI TTS 预制音色 ==========
+// 文档：https://platform.openai.com/docs/guides/text-to-speech
+// 共 13 个固定音色，不支持 voice clone
+// tts-1/tts-1-hd 仅支持前 9 个；gpt-4o-mini-tts 支持全部 13 个
+const OPENAI_VOICES = [
+  // 原始 6 个（所有模型通用）
+  { id: 'alloy', name: 'Alloy', gender: 'any', scenario: '通用音色', style: '中性平衡', age: 'any', tags: ['OpenAI', '中性', '通用'] },
+  { id: 'echo', name: 'Echo', gender: 'male', scenario: '通用音色', style: '温和男声', age: 'middle', tags: ['OpenAI', '男声', '温和'] },
+  { id: 'fable', name: 'Fable', gender: 'any', scenario: '通用音色', style: '叙事故事感', age: 'any', tags: ['OpenAI', '叙事', '故事'] },
+  { id: 'onyx', name: 'Onyx', gender: 'male', scenario: '通用音色', style: '深沉磁性男声', age: 'middle', tags: ['OpenAI', '男声', '深沉', '磁性'] },
+  { id: 'nova', name: 'Nova', gender: 'female', scenario: '通用音色', style: '清晰活力女声', age: 'young', tags: ['OpenAI', '女声', '清晰', '活力'] },
+  { id: 'shimmer', name: 'Shimmer', gender: 'female', scenario: '通用音色', style: '温暖柔和女声', age: 'young', tags: ['OpenAI', '女声', '温暖', '柔和'] },
+  // 2024-10 新增
+  { id: 'ash', name: 'Ash', gender: 'male', scenario: '通用音色', style: '轻松随性男声', age: 'young', tags: ['OpenAI', '男声', '轻松', '随性'] },
+  { id: 'coral', name: 'Coral', gender: 'female', scenario: '通用音色', style: '明快活泼女声', age: 'young', tags: ['OpenAI', '女声', '明快', '活泼'] },
+  { id: 'sage', name: 'Sage', gender: 'any', scenario: '通用音色', style: '沉稳睿智', age: 'middle', tags: ['OpenAI', '沉稳', '睿智'] },
+  // 仅 gpt-4o-mini-tts 支持
+  { id: 'ballad', name: 'Ballad', gender: 'male', scenario: 'gpt-4o-mini-tts 专属', style: '抒情叙事男声', age: 'middle', tags: ['OpenAI', '男声', '抒情', '叙事'] },
+  { id: 'verse', name: 'Verse', gender: 'any', scenario: 'gpt-4o-mini-tts 专属', style: '诗意韵律', age: 'any', tags: ['OpenAI', '诗意', '韵律'] },
+  { id: 'marin', name: 'Marin', gender: 'female', scenario: 'gpt-4o-mini-tts 专属', style: '海洋般女声', age: 'young', tags: ['OpenAI', '女声', '海洋'] },
+  { id: 'cedar', name: 'Cedar', gender: 'male', scenario: 'gpt-4o-mini-tts 专属', style: '木质感温暖男声', age: 'middle', tags: ['OpenAI', '男声', '木质', '温暖'] },
+];
+
+// ========== MiniMax TTS 预制音色 ==========
+// 文档：https://platform.minimaxi.com/docs/api-reference/speech-t2a-http
+// 通过 POST /v1/get_voice 可查询账号下所有音色，此处仅列常用系统音色
+// 复刻/设计音色获得的 voice_id 也可直接填入 voiceId 字段使用
+const MINIMAX_VOICES = [
+  // 中文男声
+  { id: 'male-qn-qingse', name: '青涩青年', gender: 'male', scenario: '中文男声', style: '青涩少年', age: 'young', tags: ['MiniMax', '男声', '青涩', '少年'] },
+  { id: 'male-qn-jingying', name: '精英青年', gender: 'male', scenario: '中文男声', style: '干练精英', age: 'young', tags: ['MiniMax', '男声', '精英', '干练'] },
+  { id: 'male-qn-badao', name: '霸道青年', gender: 'male', scenario: '中文男声', style: '霸道总裁', age: 'middle', tags: ['MiniMax', '男声', '霸道', '总裁'] },
+  { id: 'male-qn-daxuesheng', name: '青年大学生', gender: 'male', scenario: '中文男声', style: '大学生', age: 'young', tags: ['MiniMax', '男声', '大学生'] },
+  { id: 'presenter_male', name: '主持人男声', gender: 'male', scenario: '中文男声', style: '专业播音', age: 'middle', tags: ['MiniMax', '男声', '播音', '专业'] },
+  { id: 'audiobook_male_1', name: '有声书男声1', gender: 'male', scenario: '中文男声', style: '有声书朗读', age: 'middle', tags: ['MiniMax', '男声', '有声书', '旁白'] },
+  { id: 'audiobook_male_2', name: '有声书男声2', gender: 'male', scenario: '中文男声', style: '有声书朗读', age: 'middle', tags: ['MiniMax', '男声', '有声书', '旁白'] },
+  // 中文女声
+  { id: 'female-shaonv', name: '少女', gender: 'female', scenario: '中文女声', style: '清纯少女', age: 'young', tags: ['MiniMax', '女声', '少女', '清纯'] },
+  { id: 'female-yujie', name: '御姐', gender: 'female', scenario: '中文女声', style: '成熟御姐', age: 'middle', tags: ['MiniMax', '女声', '御姐', '成熟'] },
+  { id: 'female-chengshu', name: '成熟女性', gender: 'female', scenario: '中文女声', style: '知性成熟', age: 'middle', tags: ['MiniMax', '女声', '成熟', '知性'] },
+  { id: 'female-tianmei', name: '甜美女性', gender: 'female', scenario: '中文女声', style: '甜美可爱', age: 'young', tags: ['MiniMax', '女声', '甜美', '可爱'] },
+  { id: 'presenter_female', name: '主持人女声', gender: 'female', scenario: '中文女声', style: '专业播音', age: 'middle', tags: ['MiniMax', '女声', '播音', '专业'] },
+  { id: 'audiobook_female_1', name: '有声书女声1', gender: 'female', scenario: '中文女声', style: '有声书朗读', age: 'middle', tags: ['MiniMax', '女声', '有声书', '旁白'] },
+  { id: 'audiobook_female_2', name: '有声书女声2', gender: 'female', scenario: '中文女声', style: '有声书朗读', age: 'middle', tags: ['MiniMax', '女声', '有声书', '旁白'] },
+  // 国际化音色
+  { id: 'Wise_Woman', name: 'Wise Woman', gender: 'female', scenario: '国际化音色', style: '睿智女性（英）', age: 'middle', tags: ['MiniMax', 'Female', 'English', 'Wise'] },
+  { id: 'Friendly_Person', name: 'Friendly Person', gender: 'any', scenario: '国际化音色', style: '友好亲和（英）', age: 'any', tags: ['MiniMax', 'English', 'Friendly'] },
+  { id: 'Inspirational_girl', name: 'Inspirational Girl', gender: 'female', scenario: '国际化音色', style: '励志少女（英）', age: 'young', tags: ['MiniMax', 'Female', 'English', 'Inspirational'] },
+  { id: 'Deep_Voice_Man', name: 'Deep Voice Man', gender: 'male', scenario: '国际化音色', style: '深沉男声（英）', age: 'middle', tags: ['MiniMax', 'Male', 'English', 'Deep'] },
+  { id: 'Calm_Woman', name: 'Calm Woman', gender: 'female', scenario: '国际化音色', style: '平静女声（英）', age: 'middle', tags: ['MiniMax', 'Female', 'English', 'Calm'] },
+  { id: 'Casual_Guy', name: 'Casual Guy', gender: 'male', scenario: '国际化音色', style: '随性男声（英）', age: 'young', tags: ['MiniMax', 'Male', 'English', 'Casual'] },
+  { id: 'Lively_Girl', name: 'Lively Girl', gender: 'female', scenario: '国际化音色', style: '活泼少女（英）', age: 'young', tags: ['MiniMax', 'Female', 'English', 'Lively'] },
+];
+
+// ========== 阿里云百炼 CosyVoice 预制音色 ==========
+// 文档：https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list
+// 复刻/设计音色获得的 voice_id 也可直接填入 voiceId 字段使用
+const BAILIAN_VOICES = [
+  // CosyVoice-V3 系列（推荐 cosyvoice-v3-flash 模型）
+  { id: 'longanyang', name: '龙安洋', gender: 'male', scenario: 'V3 中文男声', style: '阳光大男孩', age: 'young', tags: ['百炼', '男声', '阳光', 'V3'] },
+  { id: 'longanhuan_v3', name: '龙安欢 V3', gender: 'female', scenario: 'V3 中文女声', style: '欢脱元气女（支持9种方言）', age: 'young', tags: ['百炼', '女声', '元气', '方言', 'V3'] },
+  { id: 'longhuhu_v3', name: '龙呼呼 V3', gender: 'female', scenario: 'V3 童声', style: '天真烂漫女童', age: 'child', tags: ['百炼', '女声', '童声', 'V3'] },
+  { id: 'longpaopao_v3', name: '龙泡泡 V3', gender: 'any', scenario: 'V3 特色', style: '飞天泡泡音', age: 'any', tags: ['百炼', '特色', 'V3'] },
+  { id: 'longjielidou_v3', name: '龙杰力豆 V3', gender: 'male', scenario: 'V3 中文男声', style: '阳光顽皮男', age: 'young', tags: ['百炼', '男声', '顽皮', 'V3'] },
+  { id: 'longjiaxin_v3', name: '龙嘉欣 V3', gender: 'female', scenario: 'V3 粤语', style: '优雅粤语女', age: 'middle', tags: ['百炼', '女声', '粤语', 'V3'] },
+  { id: 'longlaotie_v3', name: '龙老铁 V3', gender: 'male', scenario: 'V3 方言', style: '东北直率男', age: 'middle', tags: ['百炼', '男声', '东北', '方言', 'V3'] },
+  { id: 'longshange_v3', name: '龙陕哥 V3', gender: 'male', scenario: 'V3 方言', style: '原味陕北男', age: 'middle', tags: ['百炼', '男声', '陕北', '方言', 'V3'] },
+  { id: 'longfei_v3', name: '龙飞 V3', gender: 'male', scenario: 'V3 中文男声', style: '热血磁性男', age: 'middle', tags: ['百炼', '男声', '热血', '磁性', 'V3'] },
+  { id: 'longyingxiao_v3', name: '龙应笑 V3', gender: 'female', scenario: 'V3 中文女声', style: '清甜推销女', age: 'young', tags: ['百炼', '女声', '清甜', 'V3'] },
+  // 多语种
+  { id: 'loongkyong_v3', name: 'Loongkyong', gender: 'female', scenario: 'V3 多语种', style: '韩语女声', age: 'young', tags: ['百炼', '女声', '韩语', 'V3'] },
+  { id: 'loongriko_v3', name: 'Loongriko', gender: 'female', scenario: 'V3 多语种', style: '二次元日语女', age: 'young', tags: ['百炼', '女声', '日语', '二次元', 'V3'] },
+  { id: 'loongabby_v3', name: 'Loongabby', gender: 'female', scenario: 'V3 多语种', style: '美式英文女', age: 'young', tags: ['百炼', '女声', '美式', '英文', 'V3'] },
+  { id: 'loongemily_v3', name: 'Loongemily', gender: 'female', scenario: 'V3 多语种', style: '英式英文女', age: 'middle', tags: ['百炼', '女声', '英式', '英文', 'V3'] },
+  // CosyVoice-V2 系列（部分常用）
+  { id: 'longxiaochun_v2', name: '龙小淳 V2', gender: 'female', scenario: 'V2 中文女声', style: '温柔姐姐', age: 'young', tags: ['百炼', '女声', '温柔', 'V2'] },
+  { id: 'longcheng_v2', name: '龙橙 V2', gender: 'male', scenario: 'V2 中文男声', style: '阳光男声', age: 'young', tags: ['百炼', '男声', '阳光', 'V2'] },
+  { id: 'longwan_v2', name: '龙婉 V2', gender: 'female', scenario: 'V2 中文女声', style: '普通话女声', age: 'middle', tags: ['百炼', '女声', '普通话', 'V2'] },
+  { id: 'longshu_v2', name: '龙书 V2', gender: 'male', scenario: 'V2 中文男声', style: '新闻男声', age: 'middle', tags: ['百炼', '男声', '新闻', 'V2'] },
+];
+
+// 各 provider 默认旁白音色
+const DEFAULT_NARRATION_VOICE_BY_PROVIDER = {
+  volcano: 'zh_male_yizhipiannan_uranus_bigtts',
+  mimo: '白桦',
+  openai: 'onyx',
+  minimax: 'audiobook_male_1',
+  bailian: 'longanyang',
+};
+
+// 默认旁白音色（火山，迁移兼容）
+const DEFAULT_NARRATION_VOICE = 'zh_male_yizhipiannan_uranus_bigtts';
+
 const VOICES_BY_PROVIDER = {
   volcano: VOICES,
   mimo: MIMO_VOICES,
+  openai: OPENAI_VOICES,
+  minimax: MINIMAX_VOICES,
+  bailian: BAILIAN_VOICES,
 };
 
 // 按 provider 取音色列表
@@ -170,9 +266,6 @@ function findByIdAndProvider(id, provider) {
   return getVoicesByProvider(provider).find((v) => v.id === id) || null;
 }
 
-// 默认旁白音色（火山，迁移兼容）
-const DEFAULT_NARRATION_VOICE = 'zh_male_yizhipiannan_uranus_bigtts';
-
 module.exports = {
   // 既有（火山）导出，保持向后兼容
   VOICES,
@@ -182,7 +275,11 @@ module.exports = {
   DEFAULT_NARRATION_VOICE,
   // 新增多 provider 导出
   MIMO_VOICES,
+  OPENAI_VOICES,
+  MINIMAX_VOICES,
+  BAILIAN_VOICES,
   VOICES_BY_PROVIDER,
+  DEFAULT_NARRATION_VOICE_BY_PROVIDER,
   getVoicesByProvider,
   groupedByScenarioByProvider,
   findByIdAndProvider,

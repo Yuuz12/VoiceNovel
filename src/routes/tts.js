@@ -54,20 +54,28 @@ router.get('/preview', async (req, res) => {
 });
 
 // GET /api/tts/test - 测试 TTS 连接（用旁白音色 + 默认文本）
+const PROVIDER_LABEL = {
+  volcano: '火山方舟',
+  mimo: '小米 MIMO',
+  openai: 'OpenAI',
+  minimax: 'MiniMax',
+  bailian: '阿里云百炼',
+};
 router.get('/test', async (req, res) => {
   const settings = settingsService.get();
   const provider = (settings.tts && settings.tts.provider) || 'volcano';
   const providerCfg = (settings.tts && settings.tts.providers && settings.tts.providers[provider]) || {};
+  const label = PROVIDER_LABEL[provider] || provider;
   if (!providerCfg.apiKey) {
-    return res.status(400).json({ ok: false, error: `未配置 ${provider === 'mimo' ? '小米 MIMO' : '火山方舟'} TTS API Key` });
+    return res.status(400).json({ ok: false, error: `未配置 ${label} TTS API Key` });
   }
   const speaker = resolveNarrationSpeaker(settings);
   if (!speaker) {
-    const mimoMode = providerCfg.mode;
-    const hint = provider === 'mimo' && mimoMode === 'voicedesign'
-      ? '请先在旁白音色处填写音色设计描述'
-      : provider === 'mimo' && mimoMode === 'voiceclone'
-        ? '请先为旁白上传/选择复刻样本'
+    const mode = providerCfg.mode;
+    const hint = (provider === 'mimo' || provider === 'minimax' || provider === 'bailian') && mode === 'voicedesign'
+      ? '请先在旁白音色处填写音色设计描述/voice_id'
+      : (provider === 'mimo' || provider === 'minimax' || provider === 'bailian') && mode === 'voiceclone'
+        ? (provider === 'mimo' ? '请先为旁白上传/选择复刻样本' : '请先为旁白填写复刻 voice_id')
         : '请先选择旁白音色';
     return res.status(400).json({ ok: false, error: hint });
   }

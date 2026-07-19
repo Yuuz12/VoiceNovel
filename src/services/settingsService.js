@@ -1,8 +1,9 @@
 // 设置服务：读写 data/settings.json
 // 支持多 TTS provider 并存独立保存：tts.provider 切换，tts.providers.* 各自保留配置
+// 旁白音色按 provider 独立保存到 narration.perProvider.*，切换 provider 不丢
 const path = require('path');
 const { readJson, writeJson, ensureDir } = require('../storage/fileStorage');
-const { DEFAULT_NARRATION_VOICE } = require('../config/voices');
+const { DEFAULT_NARRATION_VOICE, DEFAULT_NARRATION_VOICE_BY_PROVIDER } = require('../config/voices');
 
 const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR || './data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -11,7 +12,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 function defaultSettings() {
   return {
     tts: {
-      // 当前生效的 provider：'volcano' | 'mimo'
+      // 当前生效的 provider：'volcano' | 'mimo' | 'openai' | 'minimax' | 'bailian'
       provider: process.env.TTS_PROVIDER || 'volcano',
       // 各 provider 配置独立保存，切换时互不影响
       providers: {
@@ -31,6 +32,32 @@ function defaultSettings() {
           audioFormat: 'mp3',
           styleInstruction: '',        // 可选全局风格指令（role:user 消息）
         },
+        // OpenAI TTS（tts-1 / tts-1-hd / gpt-4o-mini-tts）
+        openai: {
+          apiKey: process.env.OPENAI_TTS_API_KEY || '',
+          baseUrl: 'https://api.openai.com/v1/audio/speech',
+          model: 'gpt-4o-mini-tts',
+          audioFormat: 'mp3',
+          instructions: '',  // 全局指令式音色设计（仅 gpt-4o-mini-tts 生效）
+        },
+        // MiniMax TTS（speech-02-hd / speech-01-turbo 等）
+        minimax: {
+          apiKey: process.env.MINIMAX_API_KEY || '',
+          baseUrl: 'https://api.minimaxi.com/v1/t2a_v2',
+          model: 'speech-02-hd',
+          mode: 'preset',  // 'preset' | 'voicedesign' | 'voiceclone'
+          audioFormat: 'mp3',
+          sampleRate: 32000,
+        },
+        // 阿里云百炼 CosyVoice
+        bailian: {
+          apiKey: process.env.DASHSCOPE_API_KEY || '',
+          baseUrl: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2audio/text-to-audio',
+          model: 'cosyvoice-v3-flash',
+          mode: 'preset',  // 'preset' | 'voicedesign' | 'voiceclone'
+          audioFormat: 'mp3',
+          sampleRate: 24000,
+        },
       },
     },
     llm: {
@@ -40,15 +67,27 @@ function defaultSettings() {
       timeoutSeconds: parseInt(process.env.LLM_TIMEOUT_SECONDS, 10) || 300, // 单次请求超时（秒），默认 5 分钟
     },
     narration: {
-      voiceId: DEFAULT_NARRATION_VOICE,
       speed: 0,    // -50 ~ 100
       volume: 0,   // -50 ~ 100
-      // MIMO 模式下的每旁白独立音色配置（预置模式用 voiceId）
-      voiceConfig: {
+      // 按 provider 独立保存旁白音色，切换 provider 不丢
+      perProvider: {
+        volcano: { voiceId: DEFAULT_NARRATION_VOICE_BY_PROVIDER.volcano },
         mimo: {
+          voiceId: DEFAULT_NARRATION_VOICE_BY_PROVIDER.mimo,
           designDescription: '',   // voicedesign 模式
           cloneSamplePath: '',     // voiceclone 模式（相对 data/voice_samples 的路径）
           cloneSampleName: '',     // 样本显示名
+        },
+        openai: { voiceId: DEFAULT_NARRATION_VOICE_BY_PROVIDER.openai },
+        minimax: {
+          voiceId: DEFAULT_NARRATION_VOICE_BY_PROVIDER.minimax,
+          designDescription: '',   // voicedesign 模式
+          cloneVoiceId: '',         // voiceclone 模式（手动填入的复刻 voice_id）
+        },
+        bailian: {
+          voiceId: DEFAULT_NARRATION_VOICE_BY_PROVIDER.bailian,
+          designDescription: '',   // voicedesign 模式
+          cloneVoiceId: '',         // voiceclone 模式（手动填入的复刻 voice_id）
         },
       },
     },
@@ -78,7 +117,7 @@ let cache = null;
 /**
  * 迁移旧版扁平 tts 结构到新 provider 结构。
  * 旧：tts.{apiKey, resourceId, baseUrl, audioFormat, sampleRate}
- * 新：tts.provider + tts.providers.{volcano, mimo}
+ * 新：tts.provider + tts.providers.{volcano, mimo, ...}
  * 迁移后写回磁盘（仅在检测到旧结构时）。
  */
 function migrate(persisted) {
@@ -86,7 +125,11 @@ function migrate(persisted) {
   const tts = persisted.tts;
   if (!tts || typeof tts !== 'object') return persisted;
   // 已是新结构
-  if (tts.providers && typeof tts.providers === 'object') return persisted;
+  if (tts.providers && typeof tts.providers === 'object') {
+    // 仍需迁移 narration 旧结构（voiceId + voiceConfig.mimo → perProvider）
+    persisted.narration = migrateNarration(persisted.narration);
+    return persisted;
+  }
   // 旧扁平结构 → 提升到 volcano provider
   const oldVolcano = {
     apiKey: tts.apiKey || '',
@@ -102,7 +145,52 @@ function migrate(persisted) {
       mimo: defaultSettings().tts.providers.mimo,
     },
   };
+  persisted.narration = migrateNarration(persisted.narration);
   return persisted;
+}
+
+/**
+ * 迁移旁白音色旧结构到 perProvider：
+ *   旧：narration.{voiceId, voiceConfig.mimo}
+ *   新：narration.perProvider.{provider}.{voiceId, designDescription, cloneSamplePath, ...}
+ * 已是 perProvider 结构则原样返回（补全缺失的 provider 默认值）。
+ */
+function migrateNarration(narration) {
+  const defaults = defaultSettings().narration;
+  if (!narration || typeof narration !== 'object') {
+    return defaults;
+  }
+  // 已是 perProvider 结构：补全缺失字段
+  if (narration.perProvider && typeof narration.perProvider === 'object') {
+    const merged = {
+      speed: typeof narration.speed === 'number' ? narration.speed : defaults.speed,
+      volume: typeof narration.volume === 'number' ? narration.volume : defaults.volume,
+      perProvider: deepMerge(defaults.perProvider, narration.perProvider),
+    };
+    return merged;
+  }
+  // 旧结构：迁移到 perProvider
+  const oldVoiceId = narration.voiceId || '';
+  const oldMimo = (narration.voiceConfig && narration.voiceConfig.mimo) || {};
+  const perProvider = JSON.parse(JSON.stringify(defaults.perProvider));
+  // 旧 voiceId：根据格式判断归属（火山 ID 形如 zh_*，MIMO 音色名为中文/英文）
+  if (oldVoiceId) {
+    if (/^zh_[a-z]+_/.test(oldVoiceId)) {
+      perProvider.volcano.voiceId = oldVoiceId;
+    } else {
+      // MIMO 音色名（冰糖/Chloe 等），同时也作为其他 provider 的默认
+      perProvider.mimo.voiceId = oldVoiceId;
+    }
+  }
+  // 旧 voiceConfig.mimo → perProvider.mimo
+  if (oldMimo.designDescription) perProvider.mimo.designDescription = oldMimo.designDescription;
+  if (oldMimo.cloneSamplePath) perProvider.mimo.cloneSamplePath = oldMimo.cloneSamplePath;
+  if (oldMimo.cloneSampleName) perProvider.mimo.cloneSampleName = oldMimo.cloneSampleName;
+  return {
+    speed: typeof narration.speed === 'number' ? narration.speed : defaults.speed,
+    volume: typeof narration.volume === 'number' ? narration.volume : defaults.volume,
+    perProvider,
+  };
 }
 
 function load() {
