@@ -107,7 +107,14 @@ window.CharacterPanel = (function () {
       // 输入框初始值 = 之前的 text（用户不修改就保持原值）
       const input = Utils.el(opts.multiline ? 'textarea' : 'input', { type: 'text', value: initialText });
       input.style.width = '100%';
-      if (opts.multiline) { input.rows = 2; input.style.resize = 'vertical'; }
+      if (opts.multiline) {
+        input.rows = 2;
+        input.style.resize = 'vertical';
+        // textarea 的初始内容不能通过 setAttribute('value', ...) 设置（仅对 <input> 有效），
+        // 否则 textarea 会显示为空，用户一 blur 就会把空值当成修改保存掉原描述。
+        // 必须在元素创建后显式赋值 .value。
+        input.value = initialText;
+      }
       span.replaceWith(input);
       input.focus();
       if (!opts.multiline) input.select();
