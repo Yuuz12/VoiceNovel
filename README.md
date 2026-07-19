@@ -77,6 +77,7 @@ npm run dev
 填入 OpenAI 兼容服务的 Base URL / API Key / Model
 - 例如 OpenAI 官方：`https://api.openai.com/v1` + `gpt-4o-mini`
 - 或 DeepSeek、智谱、月之暗面等兼容服务
+- 推荐使用速度块的模型，如 `deepseek-v4-flash`
 
 #### 3.3 旁白音色
 
