@@ -18,6 +18,15 @@ const audioCache = require('../services/audioCacheService');
 const { resolveSegmentSpeaker } = require('../services/tts/voiceResolver');
 const logger = require('../utils/logger');
 
+// provider → 中文标签映射（错误提示用）
+const PROVIDER_LABELS = {
+  volcano: '火山方舟',
+  mimo: '小米 MIMO',
+  openai: 'OpenAI',
+  minimax: 'MiniMax',
+  bailian: '阿里云百炼',
+};
+
 function send(ws, obj) {
   if (ws.readyState !== ws.OPEN) return;
   try {
@@ -124,7 +133,9 @@ async function streamSegment(ws, connId, novelId, segmentId, controller, force) 
 
   const settings = settingsService.get();
   const { speaker, characterName, speed, volume } = resolveSegmentSpeaker(novel, segment, settings);
-  const key = audioCache.computeKey(speaker, segment.text, { speed, volume });
+  // 缓存键含 provider/model/mode 等字段，避免切换 provider 后复用旧缓存（Bug 修复）
+  const keyParams = audioCache.keyParamsFromSettings(settings);
+  const key = audioCache.computeKey(speaker, segment.text, { speed, volume, ...keyParams });
 
   // force：删除缓存，强制走 TTS 重新合成
   if (force) {
@@ -146,16 +157,21 @@ async function streamSegment(ws, connId, novelId, segmentId, controller, force) 
   const provider = (settings.tts && settings.tts.provider) || 'volcano';
   const providerCfg = (settings.tts && settings.tts.providers && settings.tts.providers[provider]) || {};
   if (!providerCfg.apiKey) {
-    const label = provider === 'mimo' ? '小米 MIMO' : '火山方舟';
+    const label = PROVIDER_LABELS[provider] || provider;
     return sendError(ws, `未配置 ${label} TTS API Key，请在设置页填写`, 'NO_API_KEY');
   }
-  // voicedesign/voiceclone 模式下 speaker 必填（描述/样本），缺失则提示
+  // voicedesign/voiceclone 模式下 speaker 必填（描述/样本/voice_id），缺失则提示
   if (!speaker) {
-    const mimoMode = providerCfg.mode;
-    const hint = provider === 'mimo' && mimoMode === 'voicedesign'
-      ? '音色设计模式需填写描述文本'
-      : provider === 'mimo' && mimoMode === 'voiceclone'
-        ? '音色复刻模式需上传/选择样本'
+    const mode = providerCfg.mode;
+    const supportsDesign = provider === 'mimo' || provider === 'minimax' || provider === 'bailian';
+    const hint = supportsDesign && mode === 'voicedesign'
+      ? (provider === 'mimo'
+          ? '音色设计模式需填写描述文本'
+          : '音色设计模式需填写设计生成的 voice_id')
+      : supportsDesign && mode === 'voiceclone'
+        ? (provider === 'mimo'
+            ? '音色复刻模式需上传/选择样本'
+            : '音色复刻模式需填写复刻获得的 voice_id')
         : '未配置音色';
     return sendError(ws, hint, 'NO_VOICE');
   }

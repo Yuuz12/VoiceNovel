@@ -30,8 +30,12 @@ router.get('/preview', async (req, res) => {
     return res.status(400).json({ error: '缺少 speaker 或 text 参数' });
   }
 
+  // 缓存键含 provider/model/mode 等字段，避免切换 provider 后复用旧缓存（Bug 修复）
+  const settings = settingsService.get();
+  const keyParams = audioCache.keyParamsFromSettings(settings);
+  const key = audioCache.computeKey(speaker, text, { speed, volume, ...keyParams });
+
   // 命中缓存直接返回
-  const key = audioCache.computeKey(speaker, text, { speed, volume });
   if (audioCache.has(key)) {
     const buf = audioCache.read(key);
     res.setHeader('Content-Type', 'audio/mpeg');

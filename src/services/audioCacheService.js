@@ -42,15 +42,63 @@ function extractExpressionContexts(text) {
 
 /**
  * 计算缓存键（自动移除表现力标签，保证含/不含标签的同文本走同一缓存）
+ *
+ * 关键：params 必须包含所有影响音频输出的字段（provider/model/mode/cloneVoiceId 等），
+ * 否则切换 provider 或修改 model/mode 后会复用旧缓存，播放的还是旧音频。
+ *
+ * 推荐用 keyParamsFromSettings(settings) 从 settings 提取这些字段。
+ *
  * @param {string} speaker
  * @param {string} text
- * @param {object} [params] { speed, volume }
+ * @param {object} [params] { speed, volume, provider, model, mode, cloneVoiceId, designDescription, styleInstruction, instructions, resourceId, baseUrl }
  * @returns {string} 32 字符 hex
  */
 function computeKey(speaker, text, params = {}) {
   const normalizedText = stripExpressionTags(text);
-  const raw = `${speaker}|${normalizedText}|${params.speed || 0}|${params.volume || 0}`;
+  // 用 JSON.stringify 保证字段顺序稳定 + 字段增减不冲突
+  const raw = JSON.stringify({
+    speaker: speaker || '',
+    text: normalizedText,
+    speed: params.speed || 0,
+    volume: params.volume || 0,
+    provider: params.provider || '',
+    model: params.model || '',
+    mode: params.mode || '',
+    cloneVoiceId: params.cloneVoiceId || '',
+    designDescription: params.designDescription || '',
+    styleInstruction: params.styleInstruction || '',
+    instructions: params.instructions || '',
+    resourceId: params.resourceId || '',
+    baseUrl: params.baseUrl || '',
+  });
   return crypto.createHash('sha256').update(raw, 'utf-8').digest('hex').slice(0, 32);
+}
+
+/**
+ * 从 settings 提取影响音频输出的关键字段，供 computeKey 使用。
+ * 调用方示例：
+ *   const keyParams = audioCache.keyParamsFromSettings(settings);
+ *   const key = audioCache.computeKey(speaker, text, { speed, volume, ...keyParams });
+ *
+ * @param {object} settings settingsService.get() 返回值
+ * @returns {object} { provider, model, mode, cloneVoiceId, designDescription, styleInstruction, instructions, resourceId, baseUrl }
+ */
+function keyParamsFromSettings(settings) {
+  const tts = (settings && settings.tts) || {};
+  const provider = tts.provider || 'volcano';
+  const providerCfg = (tts.providers && tts.providers[provider]) || {};
+  return {
+    provider,
+    model: providerCfg.model || '',
+    mode: providerCfg.mode || '',
+    // voicedesign/voiceclone 模式下的额外标识
+    // 注意：cloneVoiceId/designDescription 是角色/旁白级别的，不应从 providerCfg 取
+    // 这里仅返回 provider 级别的全局配置（styleInstruction/instructions/resourceId/baseUrl）
+    styleInstruction: providerCfg.styleInstruction || '',
+    instructions: providerCfg.instructions || '',
+    resourceId: providerCfg.resourceId || '',
+    baseUrl: providerCfg.baseUrl || '',
+  };
 }
 
 function cachePath(key) {
@@ -156,6 +204,7 @@ function clear() {
 
 module.exports = {
   computeKey,
+  keyParamsFromSettings,
   stripExpressionTags,
   extractExpressionContexts,
   has,

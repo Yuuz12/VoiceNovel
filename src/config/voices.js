@@ -266,6 +266,11 @@ function findByIdAndProvider(id, provider) {
   return getVoicesByProvider(provider).find((v) => v.id === id) || null;
 }
 
+// 按 provider + 性别过滤（多 provider 自动匹配用）
+function findByGenderAndProvider(gender, provider) {
+  return getVoicesByProvider(provider).filter((v) => v.gender === gender);
+}
+
 module.exports = {
   // 既有（火山）导出，保持向后兼容
   VOICES,
@@ -283,4 +288,5 @@ module.exports = {
   getVoicesByProvider,
   groupedByScenarioByProvider,
   findByIdAndProvider,
+  findByGenderAndProvider,
 };

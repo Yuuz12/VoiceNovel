@@ -1,11 +1,25 @@
 // 角色音色匹配服务：LLM 推荐 + 规则校验 + 冲突解决
-const { VOICES, findByGender, findById } = require('../config/voices');
+// 多 provider 感知：根据 settings.tts.provider 取对应 provider 的音色目录进行匹配/校验
+const {
+  getVoicesByProvider,
+  findByIdAndProvider,
+  findByGenderAndProvider,
+} = require('../config/voices');
 const llmService = require('./llmService');
 const settingsService = require('./settingsService');
 const logger = require('../utils/logger');
 
 /**
+ * 取当前 provider（默认 volcano）
+ */
+function getCurrentProvider() {
+  const settings = settingsService.get();
+  return (settings.tts && settings.tts.provider) || 'volcano';
+}
+
+/**
  * 为小说的所有角色自动匹配音色（就地修改 novel.characters）
+ * 按 settings.tts.provider 取对应音色目录，避免跨 provider 用错音色 id
  * @param {object} novel - novel 对象（会被修改）
  * @returns {Promise<object>} novel
  */
@@ -23,6 +37,9 @@ async function autoMatch(novel, opts = {}) {
     return novel;
   }
 
+  const provider = (settings.tts && settings.tts.provider) || 'volcano';
+  const providerVoices = getVoicesByProvider(provider);
+
   // 只为还没分配音色或性别未知的角色请求 LLM
   // 实际上：让 LLM 全部推荐一遍，但保留用户已手动设置的（标记为 locked）
   const toMatch = characters.map((c) => ({
@@ -36,8 +53,9 @@ async function autoMatch(novel, opts = {}) {
     // 透传 opts（signal + onProgress + concurrency）给 recommendVoices
     const characterConcurrency = Math.max(1, Math.min(10,
       (settings.parsing && settings.parsing.characterConcurrency) || 3));
+    // 关键：传当前 provider 的音色目录，而非固定火山目录
     matches = await llmService.recommendVoices(
-      toMatch, VOICES, settings.llm, { ...opts, concurrency: characterConcurrency }
+      toMatch, providerVoices, settings.llm, { ...opts, concurrency: characterConcurrency }
     );
   } catch (err) {
     // 用户取消：不降级，直接抛出
@@ -45,7 +63,7 @@ async function autoMatch(novel, opts = {}) {
     logger.error(`LLM recommendVoices failed: ${err.message}`);
     // LLM 真失败才降级规则匹配，并通过 onProgress 通知前端
     if (opts.onProgress) opts.onProgress({ type: 'fallback', message: `LLM 失败（${err.message}），降级规则匹配` });
-    matches = ruleBasedMatch(toMatch);
+    matches = ruleBasedMatch(toMatch, provider);
   }
 
   // 应用匹配结果，做校验与冲突解决
@@ -67,24 +85,24 @@ async function autoMatch(novel, opts = {}) {
     const m = matchMap.get(c.name);
     let voiceId = m && m.voiceId;
 
-    // 校验 1：音色存在
-    if (voiceId && !findById(voiceId)) {
-      logger.warn(`Voice ${voiceId} not in catalog, falling back`);
+    // 校验 1：音色存在（按当前 provider 查）
+    if (voiceId && !findByIdAndProvider(voiceId, provider)) {
+      logger.warn(`Voice ${voiceId} not in ${provider} catalog, falling back`);
       voiceId = null;
     }
 
-    // 校验 2：性别一致
+    // 校验 2：性别一致（按当前 provider 查）
     if (voiceId && c.gender && c.gender !== 'unknown') {
-      const v = findById(voiceId);
+      const v = findByIdAndProvider(voiceId, provider);
       if (v && v.gender !== c.gender) {
-        logger.warn(`Voice ${voiceId} gender mismatch for ${c.name}, falling back`);
+        logger.warn(`Voice ${voiceId} gender mismatch for ${c.name} in ${provider}, falling back`);
         voiceId = null;
       }
     }
 
     // 校验 3：冲突解决（同小说内尽量不重复）
     if (voiceId && usedVoiceIds.has(voiceId)) {
-      const fallback = pickFallback(c, usedVoiceIds);
+      const fallback = pickFallback(c, usedVoiceIds, provider);
       voiceId = fallback;
     }
 
@@ -93,7 +111,7 @@ async function autoMatch(novel, opts = {}) {
       usedVoiceIds.add(voiceId);
     } else {
       // 最终兜底
-      const fallback = pickFallback(c, usedVoiceIds);
+      const fallback = pickFallback(c, usedVoiceIds, provider);
       if (fallback) {
         c.voiceId = fallback;
         usedVoiceIds.add(fallback);
@@ -106,10 +124,13 @@ async function autoMatch(novel, opts = {}) {
 
 /**
  * 规则匹配（LLM 失败时降级用）：按性别轮询分配
+ * @param {Array} characters
+ * @param {string} [provider] 当前 provider，默认 volcano
  */
-function ruleBasedMatch(characters) {
-  const femaleVoices = findByGender('female');
-  const maleVoices = findByGender('male');
+function ruleBasedMatch(characters, provider) {
+  provider = provider || getCurrentProvider();
+  const femaleVoices = findByGenderAndProvider('female', provider);
+  const maleVoices = findByGenderAndProvider('male', provider);
   let fIdx = 0;
   let mIdx = 0;
   return characters.map((c) => {
@@ -130,13 +151,17 @@ function ruleBasedMatch(characters) {
 
 /**
  * 从未使用的音色里挑一个兜底
+ * @param {object} character
+ * @param {Set<string>} usedVoiceIds
+ * @param {string} [provider] 当前 provider，默认 volcano
  */
-function pickFallback(character, usedVoiceIds) {
+function pickFallback(character, usedVoiceIds, provider) {
+  provider = provider || getCurrentProvider();
   const gender = character.gender || 'unknown';
   let pool;
-  if (gender === 'female') pool = findByGender('female');
-  else if (gender === 'male') pool = findByGender('male');
-  else pool = VOICES;
+  if (gender === 'female') pool = findByGenderAndProvider('female', provider);
+  else if (gender === 'male') pool = findByGenderAndProvider('male', provider);
+  else pool = getVoicesByProvider(provider);
 
   // 优先选未用过的
   for (const v of pool) {
