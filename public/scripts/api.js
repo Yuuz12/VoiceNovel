@@ -118,6 +118,8 @@ window.API = (function () {
     deleteNovel: (id) => request('DELETE', '/novels/' + id),
     // 更新段落（如换绑角色 characterId）
     updateSegment: (novelId, segId, data) => request('PUT', '/novels/' + novelId + '/segments/' + segId, data),
+    deleteSegment: (novelId, segId) => request('DELETE', '/novels/' + novelId + '/segments/' + segId),
+    moveSegment: (novelId, segId, targetId) => request('POST', '/novels/' + novelId + '/segments/' + segId + '/move', { targetId }),
     segmentNovelRule: (id) => request('POST', '/novels/' + id + '/segment'),
     // LLM 智能分段（SSE 流式）：onEvent({event,data}) 接收 progress/done/error，signal 可取消
     // body: { continue?, fresh?, forceEmpty? } 控制继续/重新开始/角色为空时强制

@@ -31,6 +31,47 @@ function clearSegmentProgress(novelId) {
   remove(segProgressPath(novelId));
 }
 
+// === 小说元数据缓存（listNovels 性能优化）===
+// 问题：原 listNovels 每次都同步读取所有小说完整 JSON 仅用于统计 segmentCount/characterCount/rawTextLength，
+//       小说数多或单本很大时阻塞 Node 事件循环。
+// 方案：内存缓存 Map<id, meta>，saveNovel 时同步更新，deleteNovel 时删除，首次 listNovels 时懒加载。
+// 一致性保证：所有写操作都走 saveNovel/deleteNovel，会同步更新缓存，不会出现脏读。
+let novelMetaCache = null; // Map<id, meta> | null（null 表示未初始化）
+
+function buildMetaFromNovel(n) {
+  return {
+    id: n.id,
+    title: n.title,
+    createdAt: n.createdAt,
+    updatedAt: n.updatedAt,
+    segmentCount: (n.segments || []).length,
+    characterCount: (n.characters || []).length,
+    rawTextLength: (n.rawText || '').length,
+  };
+}
+
+// 懒加载：首次调用时扫描 NOVELS_DIR 填充缓存
+function ensureMetaCache() {
+  if (novelMetaCache) return;
+  novelMetaCache = new Map();
+  const files = listFiles(NOVELS_DIR, '.json');
+  for (const f of files) {
+    const n = readJson(path.join(NOVELS_DIR, f));
+    if (n && n.id) novelMetaCache.set(n.id, buildMetaFromNovel(n));
+  }
+}
+
+// 写操作后同步更新缓存（saveNovel 调用）
+function updateMetaCache(novel) {
+  ensureMetaCache();
+  novelMetaCache.set(novel.id, buildMetaFromNovel(novel));
+}
+
+// 删除操作后同步清理缓存（deleteNovel 调用）
+function removeMetaCache(id) {
+  if (novelMetaCache) novelMetaCache.delete(id);
+}
+
 /**
  * 按名字匹配已有角色（功能 2：LLM 分段只复用已有角色，不创建/不覆盖）
  * 容错策略（按优先级）：
@@ -71,22 +112,10 @@ function matchCharacterId(name, characters) {
 }
 
 function listNovels() {
-  const files = listFiles(NOVELS_DIR, '.json');
-  const novels = [];
-  for (const f of files) {
-    const n = readJson(path.join(NOVELS_DIR, f));
-    if (n) {
-      novels.push({
-        id: n.id,
-        title: n.title,
-        createdAt: n.createdAt,
-        updatedAt: n.updatedAt,
-        segmentCount: (n.segments || []).length,
-        characterCount: (n.characters || []).length,
-        rawTextLength: (n.rawText || '').length,
-      });
-    }
-  }
+  // 使用元数据缓存，避免每次都同步读取所有小说完整 JSON
+  // 首次调用懒加载，后续直接从内存 Map 读取（O(N) 数组化 + 排序，N 通常 < 20）
+  ensureMetaCache();
+  const novels = Array.from(novelMetaCache.values());
   novels.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   return novels;
 }
@@ -98,6 +127,8 @@ function getNovel(id) {
 function saveNovel(novel) {
   novel.updatedAt = new Date().toISOString();
   writeJson(novelPath(novel.id), novel);
+  // 同步更新元数据缓存，保证 listNovels 看到最新统计
+  updateMetaCache(novel);
   return novel;
 }
 
@@ -135,6 +166,8 @@ function updateNovel(id, partial) {
 function deleteNovel(id) {
   remove(novelPath(id));
   remove(segProgressPath(id)); // 清理分段进度文件
+  // 同步清理元数据缓存
+  removeMetaCache(id);
   return true;
 }
 
@@ -605,8 +638,12 @@ async function extractCharacters(novelId, opts = {}) {
     throw err;
   }
   // 注意：llmService 期望 settings.llm 子对象（{ baseUrl, apiKey, model }），不能传整个 settings
-  // 透传 opts（signal + onProgress）给下层，支持流式进度与取消
-  const extracted = await llmService.extractCharacters(novel.rawText || '', settings.llm, opts);
+  // 透传 opts（signal + onProgress + concurrency）给下层，支持流式进度与取消
+  const characterConcurrency = Math.max(1, Math.min(10,
+    (settings.parsing && settings.parsing.characterConcurrency) || 3));
+  const extracted = await llmService.extractCharacters(
+    novel.rawText || '', settings.llm, { ...opts, concurrency: characterConcurrency }
+  );
 
   // === 覆盖模式：删除所有旧角色及音色配置，用 LLM 提取的新列表重建 ===
   // 1. 旧角色 ID→name 映射，用于段落换绑时反查旧名字
@@ -663,8 +700,66 @@ function updateSegment(novelId, segmentId, partial) {
     if (cid && !(novel.characters || []).some((c) => c.id === cid)) return null;
     seg.characterId = cid;
   }
+  if (partial.type !== undefined) {
+    // 限制为 narration/dialog，其他值忽略
+    if (partial.type === 'narration' || partial.type === 'dialog') {
+      seg.type = partial.type;
+      // 旁白段不允许绑定角色
+      if (seg.type === 'narration') seg.characterId = null;
+    }
+  }
+  if (partial.text !== undefined) {
+    const t = String(partial.text || '').trim();
+    if (t) seg.text = t;
+  }
   saveNovel(novel);
   return seg;
+}
+
+/**
+ * 删除段落：移除该段并重排 order（保持连续）
+ */
+function deleteSegment(novelId, segmentId) {
+  const novel = getNovel(novelId);
+  if (!novel) return false;
+  const segs = novel.segments || [];
+  const idx = segs.findIndex((s) => s.id === segmentId);
+  if (idx < 0) return false;
+  segs.splice(idx, 1);
+  // 重排 order（从 0 开始连续）
+  segs.sort((a, b) => a.order - b.order);
+  segs.forEach((s, i) => { s.order = i; });
+  saveNovel(novel);
+  return true;
+}
+
+/**
+ * 重排段落：把 segmentId 移动到 targetId 之前（targetId 为 null 则移到末尾）
+ * 重排后 order 从 0 开始连续
+ */
+function reorderSegment(novelId, segmentId, targetId) {
+  const novel = getNovel(novelId);
+  if (!novel) return false;
+  const segs = novel.segments || [];
+  const fromIdx = segs.findIndex((s) => s.id === segmentId);
+  if (fromIdx < 0) return false;
+  const [moved] = segs.splice(fromIdx, 1);
+  let toIdx;
+  if (targetId === null || targetId === undefined) {
+    toIdx = segs.length; // 末尾
+  } else {
+    toIdx = segs.findIndex((s) => s.id === targetId);
+    if (toIdx < 0) {
+      // 目标不存在，回滚 splice 并返回失败
+      segs.splice(fromIdx, 0, moved);
+      return false;
+    }
+  }
+  segs.splice(toIdx, 0, moved);
+  // 重排 order
+  segs.forEach((s, i) => { s.order = i; });
+  saveNovel(novel);
+  return true;
 }
 
 /**
@@ -737,6 +832,8 @@ module.exports = {
   addCharacter,
   deleteCharacter,
   updateSegment,
+  deleteSegment,
+  reorderSegment,
   extractCharacters,
   autoMatchVoices,
   getSegmentProgress,

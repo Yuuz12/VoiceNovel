@@ -33,8 +33,12 @@ async function autoMatch(novel, opts = {}) {
 
   let matches = [];
   try {
-    // 透传 opts（signal + onProgress）给 recommendVoices
-    matches = await llmService.recommendVoices(toMatch, VOICES, settings.llm, opts);
+    // 透传 opts（signal + onProgress + concurrency）给 recommendVoices
+    const characterConcurrency = Math.max(1, Math.min(10,
+      (settings.parsing && settings.parsing.characterConcurrency) || 3));
+    matches = await llmService.recommendVoices(
+      toMatch, VOICES, settings.llm, { ...opts, concurrency: characterConcurrency }
+    );
   } catch (err) {
     // 用户取消：不降级，直接抛出
     if (err.code === 'ABORTED') throw err;

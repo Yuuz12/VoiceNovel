@@ -28,7 +28,7 @@ class LLMError extends Error {
  * 合并多个 AbortSignal（Node 18 无 AbortSignal.any，手动实现）。
  * 任一 signal abort 时，合并 controller 立即 abort。
  * @param {...AbortSignal} signals
- * @returns {AbortSignal}
+ * @returns {{ signal: AbortSignal, cleanup: () => void }}
  */
 function combineSignals(...signals) {
   const controller = new AbortController();
@@ -39,13 +39,19 @@ function combineSignals(...signals) {
       break;
     }
   }
-  if (!controller.signal.aborted) {
-    const cleanup = () => {
+  let cleaned = false;
+  let onAbort = null;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (onAbort) {
       for (const s of filtered) {
         try { s.removeEventListener('abort', onAbort); } catch (_) {}
       }
-    };
-    const onAbort = () => {
+    }
+  };
+  if (!controller.signal.aborted) {
+    onAbort = () => {
       controller.abort();
       cleanup();
     };
@@ -53,7 +59,7 @@ function combineSignals(...signals) {
       s.addEventListener('abort', onAbort, { once: true });
     }
   }
-  return controller.signal;
+  return { signal: controller.signal, cleanup };
 }
 
 /**
@@ -85,7 +91,7 @@ async function chat(settings, messages, opts = {}) {
 
   // 合并「用户取消 signal」与「兜底超时 signal」，任一触发即 abort fetch
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = combineSignals(opts.signal, timeoutSignal);
+  const combined = combineSignals(opts.signal, timeoutSignal);
 
   try {
     const resp = await fetch(url, {
@@ -95,7 +101,7 @@ async function chat(settings, messages, opts = {}) {
         Authorization: `Bearer ${settings.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal,
+      signal: combined.signal,
     });
 
     if (!resp.ok) {
@@ -113,13 +119,16 @@ async function chat(settings, messages, opts = {}) {
   } catch (err) {
     // abort 来源区分：用户主动取消 vs 兜底超时
     if (err instanceof LLMError) throw err;
-    if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || signal.aborted) {
+    if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || combined.signal.aborted) {
       if (opts.signal && opts.signal.aborted) {
         throw new LLMError('LLM 请求已取消', 'ABORTED');
       }
       throw new LLMError(`LLM 单次请求超时 (${timeoutMs}ms)，请重试`, 'TIMEOUT');
     }
     throw new LLMError(`LLM 请求失败: ${err.message}`, 'NETWORK_ERROR');
+  } finally {
+    // 关键：请求结束后清理监听器，防止并行处理时监听器累积导致内存泄漏
+    combined.cleanup();
   }
 }
 
@@ -151,7 +160,7 @@ async function chatStream(settings, messages, opts = {}) {
   };
 
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = combineSignals(opts.signal, timeoutSignal);
+  const combined = combineSignals(opts.signal, timeoutSignal);
 
   try {
     const resp = await fetch(url, {
@@ -161,7 +170,7 @@ async function chatStream(settings, messages, opts = {}) {
         Authorization: `Bearer ${settings.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal,
+      signal: combined.signal,
     });
 
     if (!resp.ok) {
@@ -226,13 +235,16 @@ async function chatStream(settings, messages, opts = {}) {
     return content;
   } catch (err) {
     if (err instanceof LLMError) throw err;
-    if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || signal.aborted) {
+    if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || combined.signal.aborted) {
       if (opts.signal && opts.signal.aborted) {
         throw new LLMError('LLM 请求已取消', 'ABORTED');
       }
       throw new LLMError(`LLM 单次请求超时 (${timeoutMs}ms)，请重试`, 'TIMEOUT');
     }
     throw new LLMError(`LLM 请求失败: ${err.message}`, 'NETWORK_ERROR');
+  } finally {
+    // 关键：请求结束后清理监听器，防止并行处理时监听器累积导致内存泄漏
+    combined.cleanup();
   }
 }
 
@@ -294,43 +306,46 @@ function chunkText(text, maxChars = 6000) {
 }
 
 /**
- * 提取角色清单
+ * 提取角色清单（并行处理多个 chunk）
  * @param {string} text
- * @param {object} settings
- * @param {object} [opts] { signal, onProgress }
+ * @param {object} settings LLM 子配置 { baseUrl, apiKey, model }
+ * @param {object} [opts] { signal, onProgress, concurrency }
  * @returns {Promise<Array<{name, gender, description}>>}
  */
 async function extractCharacters(text, settings, opts = {}) {
   const onProgress = opts.onProgress;
+  const concurrency = Math.max(1, Math.min(10, opts.concurrency || 3));
   const chunks = chunkText(text || '', 6000);
-  onProgress && onProgress({ type: 'start', task: 'extract', chunkCount: chunks.length });
+  onProgress && onProgress({ type: 'start', task: 'extract', chunkCount: chunks.length, concurrency });
   if (chunks.length === 0) return [];
 
-  const all = new Map();
-  for (let i = 0; i < chunks.length; i++) {
+  const chunkTotal = chunks.length;
+  const results = new Array(chunkTotal); // 每个 chunk 解析出的角色数组
+  let workerIndex = 0;
+  let workerError = null;
+
+  // 处理单个 chunk：调 LLM + 解析行格式
+  const processChunk = async (i) => {
     if (opts.signal && opts.signal.aborted) {
       throw new LLMError('已取消', 'ABORTED');
     }
     const messages = [
       {
         role: 'system',
-        content: '你是一名小说分析助手，请分析小说文本并提取所有"说过话"的角色（不提取仅在旁白中被提及但未说话的人物）。严格以 JSON 格式返回。',
+        content: '你是一名小说分析助手，请分析小说文本并提取所有"说过话"的角色（不提取仅在旁白中被提及但未说话的人物）。每行一个角色，格式：角色名|性别|简短描述。',
       },
       {
         role: 'user',
-        content: `请分析以下小说文本（第 ${i + 1}/${chunks.length} 段），提取其中所有"说过话"的角色信息。
+        content: `请分析以下小说文本（第 ${i + 1}/${chunkTotal} 段），提取其中所有"说过话"的角色信息。
 
-返回 JSON 格式：
-{
-  "characters": [
-    { "name": "角色名", "gender": "male|female|unknown", "description": "简短描述角色性别、年龄、身份、性格特征等，不超过50字" }
-  ]
-}
+每行一个角色，格式：
+角色名|male或female或unknown|简短描述（不超过50字）
 
 注意：
 1. 只提取实际说过话的角色（包括对话中被引用的台词）
 2. 名字使用文本中出现的角色名，不要发明新名字
 3. 性别基于文本描述或角色名字暗示判断，无法判断时填 unknown
+4. 描述简短描述角色性别、年龄、身份、性格特征等，不超过50字
 
 小说文本：
 ---
@@ -339,38 +354,81 @@ ${chunks[i]}
       },
     ];
     const content = await chatStream(settings, messages, {
-      jsonMode: true, temperature: 0.2, signal: opts.signal,
+      temperature: 0.2, signal: opts.signal,
       onToken: (t) => onProgress && onProgress({
         type: 'token', task: 'extract',
-        chunkIndex: i + 1, chunkCount: chunks.length,
+        chunkIndex: i + 1, chunkCount: chunkTotal,
         role: t.role, delta: t.delta, accumulated: t.accumulated,
       }),
     });
-    const parsed = extractJson(content);
-    if (parsed && Array.isArray(parsed.characters)) {
-      for (const c of parsed.characters) {
-        if (!c.name) continue;
-        if (all.has(c.name)) {
-          // 合并描述
-          const ex = all.get(c.name);
-          if (!ex.description && c.description) ex.description = c.description;
-          if ((!ex.gender || ex.gender === 'unknown') && c.gender && c.gender !== 'unknown') ex.gender = c.gender;
-        } else {
-          all.set(c.name, {
-            name: c.name,
-            gender: c.gender || 'unknown',
-            description: c.description || '',
-          });
-        }
-      }
-    } else {
-      onProgress && onProgress({ type: 'warn', chunkIndex: i + 1, message: `第 ${i + 1} 段 JSON 解析失败，跳过` });
+    // 解析行格式：name|gender|description
+    const parsed = [];
+    const lines = content.split('\n').map(l => l.trim()).filter(l => l);
+    for (const line of lines) {
+      if (!line.includes('|')) continue;
+      const parts = line.split('|');
+      const name = parts[0] && parts[0].trim();
+      if (!name) continue;
+      const genderRaw = (parts[1] && parts[1].trim()) || 'unknown';
+      const g = ['male', 'female', 'unknown'].includes(genderRaw) ? genderRaw : 'unknown';
+      const description = (parts[2] && parts[2].trim()) || '';
+      parsed.push({ name, gender: g, description });
     }
-    onProgress && onProgress({
-      type: 'chunk', task: 'extract',
-      chunkIndex: i + 1, chunkCount: chunks.length,
-      content, parsedCount: (parsed && parsed.characters && parsed.characters.length) || 0,
-    });
+    return { content, parsed };
+  };
+
+  // 并发 worker：不断领取未处理的 chunk 直到全部完成或出错
+  const worker = async () => {
+    while (workerIndex < chunkTotal && !workerError) {
+      if (opts.signal && opts.signal.aborted) {
+        const err = new LLMError('已取消', 'ABORTED');
+        workerError = err;
+        return;
+      }
+      const idx = workerIndex++;
+      try {
+        const { content, parsed } = await processChunk(idx);
+        results[idx] = parsed;
+        // 标记该 chunk 完成（供前端变绿）
+        onProgress && onProgress({
+          type: 'chunk-done',
+          task: 'extract',
+          chunkIndex: idx + 1, chunkCount: chunkTotal,
+        });
+        onProgress && onProgress({
+          type: 'chunk',
+          task: 'extract',
+          chunkIndex: idx + 1, chunkCount: chunkTotal,
+          content, parsedCount: parsed.length,
+        });
+      } catch (err) {
+        workerError = err;
+        return;
+      }
+    }
+  };
+
+  // 启动 concurrency 个 worker
+  const workers = [];
+  for (let w = 0; w < Math.min(concurrency, chunkTotal); w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  if (workerError) throw workerError;
+
+  // 合并所有 chunk 的结果（同名角色合并描述）
+  const all = new Map();
+  for (const parsed of results) {
+    if (!parsed) continue;
+    for (const c of parsed) {
+      if (all.has(c.name)) {
+        const ex = all.get(c.name);
+        if (!ex.description && c.description) ex.description = c.description;
+        if ((!ex.gender || ex.gender === 'unknown') && c.gender !== 'unknown') ex.gender = c.gender;
+      } else {
+        all.set(c.name, { name: c.name, gender: c.gender, description: c.description });
+      }
+    }
   }
   return Array.from(all.values());
 }
@@ -526,15 +584,16 @@ ${chunk}
 }
 
 /**
- * 为角色推荐音色
+ * 为角色推荐音色（角色多时按 concurrency 分批并行调用）
  * @param {Array} characters - [{name, gender, description}]
  * @param {Array} voices - voice catalog
- * @param {object} settings
- * @param {object} [opts] { signal, onProgress }
+ * @param {object} settings LLM 子配置
+ * @param {object} [opts] { signal, onProgress, concurrency }
  * @returns {Promise<Array<{name, voiceId, reason}>>}
  */
 async function recommendVoices(characters, voices, settings, opts = {}) {
   const onProgress = opts.onProgress;
+  const concurrency = Math.max(1, Math.min(10, opts.concurrency || 3));
   // 把音色精简一下减小 token：只保留 id/name/gender/style/tags
   const slimVoices = voices.map((v) => ({
     id: v.id,
@@ -549,58 +608,122 @@ async function recommendVoices(characters, voices, settings, opts = {}) {
     description: c.description,
   }));
 
-  onProgress && onProgress({ type: 'start', task: 'auto-match', characterCount: characters.length });
+  // 按 concurrency 把角色分成 N 批（每批尽量均匀）
+  const batchCount = Math.min(concurrency, Math.max(1, slimChars.length));
+  const batches = new Array(batchCount);
+  for (let i = 0; i < batchCount; i++) batches[i] = [];
+  slimChars.forEach((c, i) => batches[i % batchCount].push(c));
+
+  onProgress && onProgress({
+    type: 'start', task: 'auto-match',
+    characterCount: characters.length, chunkCount: batchCount, concurrency,
+  });
   if (opts.signal && opts.signal.aborted) {
     throw new LLMError('已取消', 'ABORTED');
   }
 
-  const messages = [
-    {
-      role: 'system',
-      content: '你是一名音色匹配助手。根据小说角色的性别、年龄、性格、身份，从可用音色列表中为每个角色推荐最匹配的音色。严格以 JSON 格式返回。',
-    },
-    {
-      role: 'user',
-      content: `请为以下小说角色推荐最匹配的音色。
+  const results = new Array(batchCount);
+  let workerIndex = 0;
+  let workerError = null;
+
+  // 处理单个 batch
+  const processBatch = async (batchIdx) => {
+    if (opts.signal && opts.signal.aborted) {
+      throw new LLMError('已取消', 'ABORTED');
+    }
+    const batchChars = batches[batchIdx];
+    if (!batchChars || batchChars.length === 0) return '';
+    const messages = [
+      {
+        role: 'system',
+        content: '你是一名音色匹配助手。根据小说角色的性别、年龄、性格、身份，从可用音色列表中为每个角色推荐最匹配的音色。每行一个匹配，格式：角色名|音色id|简短理由。',
+      },
+      {
+        role: 'user',
+        content: `请为以下小说角色推荐最匹配的音色。
 
 角色列表：
-${JSON.stringify(slimChars, null, 2)}
+${JSON.stringify(batchChars, null, 2)}
 
 可用音色列表（仅可使用以下 id）：
 ${JSON.stringify(slimVoices, null, 2)}
 
-返回 JSON 格式：
-{
-  "matches": [
-    { "name": "角色名", "voiceId": "音色id", "reason": "简短理由（不超过30字）" }
-  ]
-}
+每行一个匹配，格式：
+角色名|音色id|简短理由（不超过30字）
 
 要求：
 1. 性别必须匹配：女角色只能分配 female 音色，男角色只能分配 male 音色
 2. 不同角色尽量分配不同音色 id
 3. 根据角色性格、年龄、身份选择最贴合的音色（如高冷御姐选 gaolengyujie，温柔少女选 wenroushunv 等）
-4. voiceId 必须是上面列表中存在的 id`,
-    },
-  ];
+4. 音色id 必须是上面列表中存在的 id`,
+      },
+    ];
+    return await chatStream(settings, messages, {
+      temperature: 0.3, signal: opts.signal,
+      onToken: (t) => onProgress && onProgress({
+        type: 'token', task: 'auto-match',
+        chunkIndex: batchIdx + 1, chunkCount: batchCount,
+        role: t.role, delta: t.delta, accumulated: t.accumulated,
+      }),
+    });
+  };
 
-  const content = await chatStream(settings, messages, {
-    jsonMode: true, temperature: 0.3, signal: opts.signal,
-    onToken: (t) => onProgress && onProgress({
-      type: 'token', task: 'auto-match',
-      chunkIndex: 1, chunkCount: 1,
-      role: t.role, delta: t.delta, accumulated: t.accumulated,
-    }),
-  });
-  onProgress && onProgress({ type: 'llm-done', content });
-  if (opts.signal && opts.signal.aborted) {
-    throw new LLMError('已取消', 'ABORTED');
+  // 并发 worker
+  const worker = async () => {
+    while (workerIndex < batchCount && !workerError) {
+      if (opts.signal && opts.signal.aborted) {
+        workerError = new LLMError('已取消', 'ABORTED');
+        return;
+      }
+      const idx = workerIndex++;
+      try {
+        const content = await processBatch(idx);
+        results[idx] = content;
+        onProgress && onProgress({
+          type: 'chunk-done',
+          task: 'auto-match',
+          chunkIndex: idx + 1, chunkCount: batchCount,
+        });
+        onProgress && onProgress({
+          type: 'chunk',
+          task: 'auto-match',
+          chunkIndex: idx + 1, chunkCount: batchCount,
+          content, parsedCount: 0,
+        });
+      } catch (err) {
+        workerError = err;
+        return;
+      }
+    }
+  };
+
+  const workers = [];
+  for (let w = 0; w < batchCount; w++) workers.push(worker());
+  await Promise.all(workers);
+  if (workerError) throw workerError;
+
+  onProgress && onProgress({ type: 'llm-done', content: results.join('\n') });
+  // 合并所有 batch 的结果，解析行格式：name|voiceId|reason
+  const matches = [];
+  for (const content of results) {
+    if (!content) continue;
+    const lines = content.split('\n').map(l => l.trim()).filter(l => l);
+    for (const line of lines) {
+      if (!line.includes('|')) continue;
+      const parts = line.split('|');
+      const name = parts[0] && parts[0].trim();
+      const voiceId = parts[1] && parts[1].trim();
+      const reason = (parts[2] && parts[2].trim()) || '';
+      if (!name || !voiceId) continue;
+      const exists = slimVoices.some(v => v.id === voiceId);
+      if (!exists) continue;
+      matches.push({ name, voiceId, reason });
+    }
   }
-  const parsed = extractJson(content);
-  if (!parsed || !Array.isArray(parsed.matches)) {
-    throw new LLMError('LLM 推荐音色返回格式错误', 'BAD_FORMAT');
+  if (matches.length === 0) {
+    throw new LLMError('LLM 推荐音色返回格式错误或无有效匹配', 'BAD_FORMAT');
   }
-  return parsed.matches;
+  return matches;
 }
 
 module.exports = {

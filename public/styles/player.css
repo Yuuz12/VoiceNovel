@@ -309,6 +309,111 @@
   outline: 1px solid var(--primary);
 }
 
+/* 段落角色选择触发按钮（懒加载：平时显示角色名，点击才创建 select） */
+.segment-view .seg-block .seg-char-trigger {
+  padding: 1px 6px;
+  font-size: 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--primary);
+  font-weight: 500;
+  max-width: 120px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.segment-view .seg-block .seg-char-trigger.unbound {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.segment-view .seg-block .seg-char-trigger:hover {
+  border-color: var(--primary);
+}
+
+/* 段落拖拽手柄：左侧 ⠿ 图标，悬停高亮 */
+.segment-view .seg-block .seg-drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 6px;
+  margin: -2px 0;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  display: inline-block;
+}
+.segment-view .seg-block .seg-drag-handle:hover {
+  color: var(--primary);
+}
+.segment-view .seg-block .seg-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* 段落类型选择下拉（旁白/对话） */
+.segment-view .seg-block .seg-type-select {
+  padding: 1px 4px;
+  font-size: 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-mute);
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.segment-view .seg-block .seg-type-select:focus {
+  outline: 1px solid var(--primary);
+}
+
+/* 段落删除按钮：紧凑红色 */
+.segment-view .seg-block .seg-del-btn {
+  padding: 1px 6px;
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 段落文本编辑器 */
+.segment-view .seg-block .seg-text-editor {
+  width: 100%;
+  font-size: 14px;
+  font-family: inherit;
+  padding: 6px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--primary);
+  border-radius: 3px;
+  color: var(--text);
+  resize: vertical;
+  min-height: 40px;
+}
+.segment-view .seg-block .seg-text-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+/* 拖拽中：被拖块半透明 */
+.segment-view .seg-block.dragging {
+  opacity: 0.4;
+}
+
+/* 拖拽悬停目标：高亮边框 */
+.segment-view .seg-block.drag-over {
+  border-top: 2px solid var(--primary);
+  background: var(--primary-soft);
+}
+
+/* seg-tag 内的元素需要 flex-shrink 防止挤压 */
+.segment-view .seg-block .seg-tag > * {
+  flex-shrink: 0;
+}
+.segment-view .seg-block .seg-tag .seg-char-select {
+  min-width: 0;
+}
+
 /* === LLM 分段非阻塞状态条（可取消/可继续/实时输出）=== */
 .seg-status-bar {
   display: flex;

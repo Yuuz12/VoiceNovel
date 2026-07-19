@@ -45,11 +45,26 @@ router.post('/:id/segment', (req, res) => {
   res.json(novel);
 });
 
-// PUT /api/novels/:id/segments/:segId - 更新段落（如换绑角色 characterId）
+// PUT /api/novels/:id/segments/:segId - 更新段落（characterId / type / text）
 router.put('/:id/segments/:segId', (req, res) => {
   const seg = novelService.updateSegment(req.params.id, req.params.segId, req.body || {});
   if (!seg) return res.status(404).json({ error: 'novel or segment not found, or characterId invalid' });
   res.json(seg);
+});
+
+// DELETE /api/novels/:id/segments/:segId - 删除段落
+router.delete('/:id/segments/:segId', (req, res) => {
+  const ok = novelService.deleteSegment(req.params.id, req.params.segId);
+  if (!ok) return res.status(404).json({ error: 'novel or segment not found' });
+  res.json({ ok: true });
+});
+
+// POST /api/novels/:id/segments/:segId/move - 移动段落顺序
+// body: { targetId: string | null }  把 segId 移动到 targetId 之前；targetId=null 移到末尾
+router.post('/:id/segments/:segId/move', (req, res) => {
+  const ok = novelService.reorderSegment(req.params.id, req.params.segId, (req.body || {}).targetId);
+  if (!ok) return res.status(404).json({ error: 'novel or segment not found, or target not found' });
+  res.json({ ok: true });
 });
 
 // GET /api/novels/:id/segment-progress - 查询 LLM 分段进度（用于"继续未完成的分段"）

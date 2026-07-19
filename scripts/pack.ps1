@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   VoiceNovel 发布打包脚本
 

@@ -2,6 +2,7 @@
 window.CharacterPanel = (function () {
   let currentNovel = null;
   let voiceGroups = {};
+  let voiceCatalog = [];   // 扁平化的音色列表，用于 O(1) 查找音色名
   let cloneSamples = [];
   let currentProvider = 'volcano';
   let currentMimoMode = 'preset';
@@ -24,6 +25,7 @@ window.CharacterPanel = (function () {
   async function loadVoices() {
     const data = await API.listVoices(true, currentProvider);
     voiceGroups = (data && data.groups) || {};
+    voiceCatalog = Object.values(voiceGroups).flat();
   }
 
   async function loadCloneSamples() {
@@ -86,34 +88,58 @@ window.CharacterPanel = (function () {
 
   /**
    * inline 编辑 helper：点击 span 变 input，失焦/回车提交，Esc 取消
+   * 行为：
+   *   - 输入框初始值 = 之前的 text（包括空）
+   *   - 失焦时若值与之前相同（包括都为空），不触发 onSave，只恢复显示
+   *   - 失焦时若值变化（包括清空），触发 onSave 并更新显示
+   *   - 空值显示 placeholder（仅视觉提示，数据仍是空字符串）
    */
   function makeEditable(text, onSave, opts) {
     opts = opts || {};
+    const initialText = text || '';
     const span = Utils.el('span', {
       class: 'editable' + (opts.multiline ? ' editable-multiline' : ''),
       title: '点击编辑',
-    }, text || (opts.placeholder || ''));
-    if (!text && opts.placeholder) span.classList.add('placeholder');
+    }, initialText || (opts.placeholder || ''));
+    if (!initialText && opts.placeholder) span.classList.add('placeholder');
     span.addEventListener('click', () => {
-      const input = Utils.el(opts.multiline ? 'textarea' : 'input', { type: 'text', value: text || '' });
+      // 输入框初始值 = 之前的 text（用户不修改就保持原值）
+      const input = Utils.el(opts.multiline ? 'textarea' : 'input', { type: 'text', value: initialText });
       input.style.width = '100%';
       if (opts.multiline) { input.rows = 2; input.style.resize = 'vertical'; }
       span.replaceWith(input);
       input.focus();
       if (!opts.multiline) input.select();
+      let committed = false;
       const commit = () => {
+        if (committed) return; // 防止 blur + keydown 重复触发
+        committed = true;
         const v = input.value.trim();
         input.replaceWith(span);
-        if (v && v !== text) {
+        // 值未变化（包括都为空）：不触发 onSave，恢复原显示
+        if (v === initialText) {
+          span.textContent = initialText || (opts.placeholder || '');
+          if (!initialText && opts.placeholder) span.classList.add('placeholder');
+          else span.classList.remove('placeholder');
+          return;
+        }
+        // 值变化：更新显示 + 触发 onSave（包括清空）
+        if (v) {
           span.textContent = v;
           span.classList.remove('placeholder');
-          onSave(v);
-        } else if (!v && opts.placeholder) {
+        } else if (opts.placeholder) {
           span.textContent = opts.placeholder;
           span.classList.add('placeholder');
+        } else {
+          span.textContent = '';
         }
+        onSave(v);
       };
-      const cancel = () => { input.replaceWith(span); };
+      const cancel = () => {
+        if (committed) return;
+        committed = true;
+        input.replaceWith(span);
+      };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !opts.multiline) { e.preventDefault(); commit(); }
@@ -210,9 +236,10 @@ window.CharacterPanel = (function () {
     const previewBtn = Utils.el('button', { class: 'btn btn-secondary btn-preview' }, '试听');
     previewBtn.addEventListener('click', () => previewVoice(c));
 
-    // select 与试听按钮同行；design/clone 块较大，试听按钮单独成行
+    // select/trigger（preset/volcano）与试听按钮同行；design/clone 块较大，试听按钮单独成行
     let voiceBlock;
-    if (voiceArea.tagName === 'SELECT') {
+    const isInline = voiceArea.tagName === 'SELECT' || voiceArea.tagName === 'BUTTON';
+    if (isInline) {
       voiceBlock = Utils.el('div', { class: 'char-voice-row' }, [voiceArea, previewBtn]);
     } else {
       voiceBlock = Utils.el('div', {}, [voiceArea, Utils.el('div', { class: 'char-voice-row' }, [previewBtn])]);
@@ -344,24 +371,55 @@ window.CharacterPanel = (function () {
       return wrap;
     }
 
-    // preset / volcano：现有 <select>
-    const voiceSelect = Utils.el('select', { class: 'char-voice-select' });
-    voiceSelect.appendChild(Utils.el('option', { value: '' }, '— 未指定（用旁白音色）—'));
-    for (const scenario of Object.keys(voiceGroups)) {
-      const optgroup = Utils.el('optgroup', { label: scenario });
-      for (const v of voiceGroups[scenario]) {
-        if (c.gender && c.gender !== 'unknown' && v.gender !== c.gender) continue;
-        const opt = Utils.el('option', { value: v.id }, `${v.name} · ${v.style}`);
-        if (c.voiceId === v.id) opt.selected = true;
-        optgroup.appendChild(opt);
+    // preset / volcano：懒加载触发按钮（点击才创建 select，避免 100 角色 × 100 音色 = 1 万 option）
+    return renderVoiceTrigger(c);
+  }
+
+  /**
+   * 渲染音色选择触发按钮（懒加载）。
+   * 平时显示当前音色名（按钮），点击时才创建含所有音色的 select，选择后恢复为按钮。
+   * 避免每个角色卡都生成 N 个 option。
+   */
+  function renderVoiceTrigger(c) {
+    const current = c.voiceId ? (voiceCatalog.find((v) => v.id === c.voiceId)) : null;
+    const label = current ? `${current.name}` : '— 未指定（用旁白音色）—';
+    const trigger = Utils.el('button', {
+      class: 'char-voice-trigger' + (c.voiceId ? '' : ' unbound'),
+      title: '点击切换音色',
+    }, label);
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // 懒创建 select
+      const sel = Utils.el('select', { class: 'char-voice-select' });
+      sel.appendChild(Utils.el('option', { value: '' }, '— 未指定（用旁白音色）—'));
+      for (const scenario of Object.keys(voiceGroups)) {
+        const optgroup = Utils.el('optgroup', { label: scenario });
+        for (const v of voiceGroups[scenario]) {
+          if (c.gender && c.gender !== 'unknown' && v.gender !== c.gender) continue;
+          const opt = Utils.el('option', { value: v.id }, `${v.name} · ${v.style}`);
+          if (c.voiceId === v.id) opt.selected = true;
+          optgroup.appendChild(opt);
+        }
+        if (optgroup.children.length) sel.appendChild(optgroup);
       }
-      if (optgroup.children.length) voiceSelect.appendChild(optgroup);
-    }
-    voiceSelect.addEventListener('change', () => {
-      c.voiceId = voiceSelect.value;
-      updateCharacter(c.id, { voiceId: voiceSelect.value });
+      trigger.replaceWith(sel);
+      sel.focus();
+      // 尝试自动展开下拉
+      try { if (sel.showPicker) sel.showPicker(); } catch (_) {}
+      let changed = false;
+      sel.addEventListener('change', () => {
+        changed = true;
+        c.voiceId = sel.value;
+        updateCharacter(c.id, { voiceId: sel.value });
+        // 重建 trigger 显示新音色名
+        sel.replaceWith(renderVoiceTrigger(c));
+      });
+      // 失焦时若未变更，恢复为 trigger
+      sel.addEventListener('blur', () => {
+        if (!changed) sel.replaceWith(renderVoiceTrigger(c));
+      });
     });
-    return voiceSelect;
+    return trigger;
   }
 
   function fileToBase64(file) {
@@ -409,25 +467,29 @@ window.CharacterPanel = (function () {
   }
 
   // 清空所有角色对某样本的绑定（样本被删后失效路径需清理）
+  // 并发清理：先收集所有需清理的角色，再用 Promise.all 并发调用 API
+  // 避免角色多时串行 await 累加延迟（N 个角色 × 单次 API 延迟）
   async function clearSampleBindings(deletedPath) {
     if (!currentNovel || !deletedPath) return;
     const chars = currentNovel.characters || [];
-    let cleared = 0;
-    for (const c of chars) {
+    const toClear = chars.filter((c) => {
       const mimo = (c.voiceConfig && c.voiceConfig.mimo) || {};
-      if (mimo.cloneSamplePath === deletedPath) {
-        c.voiceConfig = c.voiceConfig || {};
-        c.voiceConfig.mimo = c.voiceConfig.mimo || {};
-        c.voiceConfig.mimo.cloneSamplePath = '';
-        c.voiceConfig.mimo.cloneSampleName = '';
-        await updateCharacter(c.id, { voiceConfig: { mimo: { cloneSamplePath: '', cloneSampleName: '' } } }, { silent: true });
-        cleared++;
-      }
-    }
-    if (cleared > 0) {
-      render();
-      Utils.toast(`已清空 ${cleared} 个角色的失效样本绑定`, 'info');
-    }
+      return mimo.cloneSamplePath === deletedPath;
+    });
+    if (toClear.length === 0) return;
+    // 本地状态先清空，再并发调 API 持久化
+    toClear.forEach((c) => {
+      c.voiceConfig = c.voiceConfig || {};
+      c.voiceConfig.mimo = c.voiceConfig.mimo || {};
+      c.voiceConfig.mimo.cloneSamplePath = '';
+      c.voiceConfig.mimo.cloneSampleName = '';
+    });
+    await Promise.all(toClear.map((c) =>
+      updateCharacter(c.id, { voiceConfig: { mimo: { cloneSamplePath: '', cloneSampleName: '' } } }, { silent: true })
+        .catch((err) => console.error('clear sample binding failed for', c.id, err))
+    ));
+    render();
+    Utils.toast(`已清空 ${toClear.length} 个角色的失效样本绑定`, 'info');
   }
 
   async function previewVoice(c) {

@@ -4,6 +4,19 @@ window.NovelManager = (function () {
   let voiceCatalog = [];
   let voiceGroups = {};
 
+  // === 分页状态（翻页模式：每次只渲染一页 100 条，滚到底/顶切换下/上一页）===
+  const PAGE_SIZE = 100;
+  const pagination = {
+    page: 1,            // 当前页码（1-based）
+    total: 0,           // 总段数
+    scrollLock: false,  // 切页时锁定滚动监听，避免循环触发
+  };
+  let sortedSegments = [];      // 排序缓存（避免每次 renderDetail 都 sort）
+  let segIndexMap = new Map();  // segId -> 在 sortedSegments 中的索引（O(1) 查找）
+  let lastCurrentSegId = null;  // 上次播放的段 id（用于增量更新 .current）
+  let renderedSegIds = new Set(); // 当前 DOM 中已渲染的段 id（增量分段去重）
+  let segViewScrollHandler = null; // 滚动监听器引用（便于解绑）
+
   // 播放器 SVG 图标（Material Design 风格，fill=currentColor 自动跟随按钮颜色）
   const ICONS = {
     prev: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6V6zm3.5 6l8.5 6V6l-8.5 6z"/></svg>',
@@ -12,6 +25,113 @@ window.NovelManager = (function () {
     next: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>',
     stop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>',
   };
+
+  // === 分页工具函数 ===
+  function totalPages() {
+    return Math.max(1, Math.ceil(pagination.total / PAGE_SIZE));
+  }
+  function clampPage() {
+    const tp = totalPages();
+    if (pagination.page > tp) pagination.page = tp;
+    if (pagination.page < 1) pagination.page = 1;
+  }
+  // 重建排序缓存与索引（openNovel/删除/换序/分段后调用）
+  function rebuildSegIndex() {
+    sortedSegments = (currentNovel.segments || []).slice().sort((a, b) => a.order - b.order);
+    segIndexMap = new Map();
+    sortedSegments.forEach((s, i) => segIndexMap.set(s.id, i));
+    pagination.total = sortedSegments.length;
+  }
+  // 渲染当前页的段落（只渲染 100 条）
+  function renderSegView() {
+    const sv = Utils.$('#segment-view');
+    if (!sv) return;
+    sv.innerHTML = '';
+    renderedSegIds.clear();
+    if (sortedSegments.length === 0) return;
+    const start = (pagination.page - 1) * PAGE_SIZE;
+    const end = Math.min(start + PAGE_SIZE, sortedSegments.length);
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < end; i++) {
+      const seg = sortedSegments[i];
+      const block = renderSegBlock(seg, segIndexMap, currentNovel);
+      frag.appendChild(block);
+      renderedSegIds.add(seg.id);
+    }
+    sv.appendChild(frag);
+    bindSegDragDrop(sv);
+  }
+  // 更新工具条上的"共 X 段，正在显示 A-B 段"标签
+  function updateSegCountLabel() {
+    const label = Utils.$('.segment-toolbar .seg-count');
+    if (!label) return;
+    const total = sortedSegments.length;
+    if (total === 0) {
+      label.textContent = '共 0 段';
+      return;
+    }
+    const start = (pagination.page - 1) * PAGE_SIZE + 1;
+    const end = Math.min(pagination.page * PAGE_SIZE, total);
+    label.textContent = `共 ${total} 段，正在显示 ${start}-${end} 段`;
+  }
+  // 绑定 segment-view 滚动监听（翻页触发）
+  function bindSegViewScroll() {
+    const sv = Utils.$('#segment-view');
+    if (!sv) return;
+    if (segViewScrollHandler) {
+      sv.removeEventListener('scroll', segViewScrollHandler);
+    }
+    const THRESHOLD = 80;
+    segViewScrollHandler = Utils.debounce(() => {
+      if (pagination.scrollLock) return;
+      if (sortedSegments.length === 0) return;
+      if (sv.scrollTop + sv.clientHeight >= sv.scrollHeight - THRESHOLD
+          && pagination.page < totalPages()) {
+        gotoPage(pagination.page + 1, { direction: 'next' });
+      } else if (sv.scrollTop <= THRESHOLD && pagination.page > 1) {
+        gotoPage(pagination.page - 1, { direction: 'prev' });
+      }
+    }, 120);
+    sv.addEventListener('scroll', segViewScrollHandler, { passive: true });
+  }
+  // 切换到指定页
+  function gotoPage(page, opts) {
+    opts = opts || {};
+    if (page < 1 || page > totalPages()) return;
+    if (page === pagination.page && !opts.scrollToSegId) return;
+    pagination.scrollLock = true;
+    const isPrev = page < pagination.page;
+    pagination.page = page;
+    renderSegView();
+    updateSegCountLabel();
+    requestAnimationFrame(() => {
+      const sv = Utils.$('#segment-view');
+      if (!sv) { pagination.scrollLock = false; return; }
+      if (opts.scrollToSegId) {
+        const cur = Utils.$(`#segment-view .seg-block[data-seg-id="${opts.scrollToSegId}"]`);
+        if (cur) cur.scrollIntoView({ behavior: 'auto', block: 'center' });
+      } else if (isPrev) {
+        sv.scrollTop = sv.scrollHeight;
+      } else {
+        sv.scrollTop = 0;
+      }
+      // 双重 raf 确保滚动位置稳定后再解锁
+      requestAnimationFrame(() => { pagination.scrollLock = false; });
+    });
+  }
+  // 确保指定段在可见区域（播放器跳转时调用）
+  function ensureSegmentVisible(segId) {
+    if (!segId) return;
+    const idx = segIndexMap.get(segId);
+    if (idx == null) return;
+    const targetPage = Math.floor(idx / PAGE_SIZE) + 1;
+    if (targetPage !== pagination.page) {
+      gotoPage(targetPage, { scrollToSegId: segId });
+    } else {
+      const cur = Utils.$(`#segment-view .seg-block[data-seg-id="${segId}"]`);
+      if (cur) cur.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
 
   async function init() {
     bindEvents();
@@ -92,6 +212,11 @@ window.NovelManager = (function () {
       currentNovel = novel;
       Player.loadNovel(novel);
       CharacterPanel.setNovel(novel);
+      // 重置分页状态：打开新小说时回到第 1 页
+      rebuildSegIndex();
+      pagination.page = 1;
+      lastCurrentSegId = null;
+      renderedSegIds.clear();
       renderDetail(novel);
       // 高亮列表项
       Utils.$$('#novel-list li').forEach((li) => {
@@ -138,80 +263,17 @@ window.NovelManager = (function () {
       ]),
     ]);
 
-    // 分段工具条
+    // 分段工具条（.seg-count 文本由 updateSegCountLabel 填充）
     const toolbar = Utils.el('div', { class: 'segment-toolbar' }, [
       Utils.el('span', {}, '段落列表（点击段落可跳转播放）'),
-      Utils.el('span', { class: 'seg-count' }, `共 ${(novel.segments || []).length} 段`),
+      Utils.el('span', { class: 'seg-count' }, ''),
     ]);
 
     // 播放器条
     const playerBar = renderPlayerBar(novel);
 
-    // 段落文本视图
+    // 段落文本视图（空容器，由 renderSegView 填充当前页）
     const segView = Utils.el('div', { class: 'segment-view', id: 'segment-view' });
-    const segments = (novel.segments || []).slice().sort((a, b) => a.order - b.order);
-    for (const seg of segments) {
-      const char = seg.characterId ? (novel.characters || []).find((c) => c.id === seg.characterId) : null;
-      const unbound = seg.type === 'dialog' && !seg.characterId;
-      const regenBtn = Utils.el('button', {
-        class: 'btn btn-icon seg-regen',
-        title: '重新生成此段音频',
-        onclick: (e) => {
-          e.stopPropagation();
-          if (!confirm('重新生成此段音频？将删除缓存并重新合成。')) return;
-          Player.regenerate(seg.id);
-          Utils.toast('正在重新生成音频...', 'info');
-        },
-      }, '↻');
-      // 对话段：可编辑的角色选择下拉；旁白段：无需绑定（不显示下拉）
-      const charSelect = seg.type === 'dialog'
-        ? (() => {
-            const sel = Utils.el('select', { class: 'seg-char-select' });
-            sel.appendChild(Utils.el('option', { value: '' }, '— 未绑定 —'));
-            for (const c of (novel.characters || [])) {
-              const opt = Utils.el('option', { value: c.id }, c.name);
-              if (seg.characterId === c.id) opt.selected = true;
-              sel.appendChild(opt);
-            }
-            sel.addEventListener('change', async () => {
-              const newVal = sel.value;
-              const oldVal = seg.characterId;
-              try {
-                await API.updateSegment(novel.id, seg.id, { characterId: newVal });
-                // 同步闭包 seg + currentNovel 段落数据
-                seg.characterId = newVal || null;
-                const segIdx = currentNovel.segments.findIndex((s) => s.id === seg.id);
-                if (segIdx >= 0) currentNovel.segments[segIdx].characterId = newVal || null;
-                // 局部更新绑定高亮（不重新渲染列表，保留滚动位置）
-                updateSegBlockBindingDOM(seg.id);
-                Utils.toast('已换绑角色', 'success');
-              } catch (err) {
-                // 回滚 select 到原值（不重新渲染，保留滚动位置）
-                sel.value = oldVal || '';
-                Utils.toast('换绑失败: ' + err.message, 'error');
-              }
-            });
-            sel.addEventListener('click', (e) => e.stopPropagation()); // 防止触发段落跳转
-            return sel;
-          })()
-        : null;
-      const block = Utils.el('div', {
-        class: `seg-block ${seg.type}` + (seg.id === currentPlayingId() ? ' current' : '') + (unbound ? ' unbound' : ''),
-        dataset: { segId: seg.id },
-        onclick: () => Player.seekTo(segments.findIndex((s) => s.id === seg.id)),
-      }, [
-        Utils.el('div', { class: 'seg-tag' }, [
-          seg.type === 'dialog'
-            ? Utils.el('span', { class: 'seg-type dialog' }, '对话')
-            : Utils.el('span', { class: 'seg-type narration' }, '旁白'),
-          unbound ? Utils.el('span', { class: 'seg-unbound-flag' }, '未绑定') : null,
-          charSelect,
-          regenBtn,
-        ]),
-        Utils.el('div', { class: 'seg-text' }, seg.text),
-      ]);
-      segView.appendChild(block);
-    }
 
     detail.appendChild(head);
     detail.appendChild(toolbar);
@@ -225,8 +287,328 @@ window.NovelManager = (function () {
       if (toolbarEl) toolbarEl.after(savedBar);
     }
 
+    // 渲染当前页段 block（分页加载，只渲染 100 条）
+    renderSegView();
+    // 更新"共 X 段，正在显示 A-B 段"标签
+    updateSegCountLabel();
+    // 绑定滚动监听（翻页触发）
+    bindSegViewScroll();
+
     // 绑定播放器事件
     bindPlayerEvents();
+  }
+
+  /**
+   * 渲染单个段落 block（含拖拽手柄、类型切换、角色换绑、重新生成、删除、点击文本编辑）
+   * @param {object} seg 段落对象
+   * @param {Map<string, number>} segIdxMap segId -> 全局索引（O(1) 查找）
+   * @param {object} novel 当前小说
+   */
+  function renderSegBlock(seg, segIdxMap, novel) {
+    const unbound = seg.type === 'dialog' && !seg.characterId;
+    const segIdx = segIdxMap.has(seg.id) ? segIdxMap.get(seg.id) : 0;
+
+    // 拖拽手柄
+    const dragHandle = Utils.el('span', { class: 'seg-drag-handle', title: '拖动调整顺序' }, '⠿');
+    dragHandle.addEventListener('click', (e) => e.stopPropagation());
+
+    // 类型切换：旁白/对话
+    const typeSelect = Utils.el('select', { class: 'seg-type-select', title: '段落类型' });
+    const optNarration = Utils.el('option', { value: 'narration' }, '旁白');
+    const optDialog = Utils.el('option', { value: 'dialog' }, '对话');
+    if (seg.type === 'dialog') optDialog.selected = true;
+    else optNarration.selected = true;
+    typeSelect.appendChild(optNarration);
+    typeSelect.appendChild(optDialog);
+    typeSelect.addEventListener('change', async () => {
+      const newType = typeSelect.value;
+      if (newType === seg.type) return;
+      try {
+        await API.updateSegment(currentNovel.id, seg.id, { type: newType });
+        seg.type = newType;
+        const idx = segIndexMap.get(seg.id);
+        if (idx != null && currentNovel.segments[idx]) {
+          currentNovel.segments[idx].type = newType;
+          if (newType === 'narration') currentNovel.segments[idx].characterId = null;
+        }
+        // 局部重建该 block（只重渲染 1 个，避免全量 renderDetail）
+        const oldBlock = Utils.$(`#segment-view .seg-block[data-seg-id="${seg.id}"]`);
+        if (oldBlock) {
+          const newBlock = renderSegBlock(seg, segIdxMap, currentNovel);
+          oldBlock.replaceWith(newBlock);
+        }
+        Utils.toast('已修改段落类型', 'success');
+      } catch (err) {
+        Utils.toast('修改类型失败: ' + err.message, 'error');
+        typeSelect.value = seg.type; // 回滚
+      }
+    });
+    typeSelect.addEventListener('click', (e) => e.stopPropagation());
+
+    // 重新生成按钮
+    const regenBtn = Utils.el('button', {
+      class: 'btn btn-icon seg-regen',
+      title: '重新生成此段音频',
+      onclick: (e) => {
+        e.stopPropagation();
+        if (!confirm('重新生成此段音频？将删除缓存并重新合成。')) return;
+        Player.regenerate(seg.id);
+        Utils.toast('正在重新生成音频...', 'info');
+      },
+    }, '↻');
+
+    // 角色选择触发按钮（懒加载：点击才创建 select，避免每个对话段都生成 N 个 option）
+    const charTrigger = seg.type === 'dialog' ? renderCharTrigger(seg, novel) : null;
+
+    // 删除段落按钮
+    const delBtn = Utils.el('button', {
+      class: 'btn btn-danger btn-sm seg-del-btn',
+      title: '删除此段',
+      onclick: (e) => {
+        e.stopPropagation();
+        if (!confirm('确定删除此段？删除后顺序自动重排，无法撤销。')) return;
+        deleteSegment(seg);
+      },
+    }, '删除');
+
+    // 段落文本（点击进入编辑模式）
+    const textDiv = Utils.el('div', { class: 'seg-text' }, seg.text);
+    textDiv.addEventListener('click', (e) => {
+      if (e.target !== textDiv) return;
+      e.stopPropagation();
+      editSegmentText(seg, textDiv);
+    });
+
+    const block = Utils.el('div', {
+      class: `seg-block ${seg.type}` + (seg.id === currentPlayingId() ? ' current' : '') + (unbound ? ' unbound' : ''),
+      dataset: { segId: seg.id },
+      onclick: () => Player.seekTo(segIdx),
+    }, [
+      Utils.el('div', { class: 'seg-tag' }, [
+        dragHandle,
+        typeSelect,
+        unbound ? Utils.el('span', { class: 'seg-unbound-flag' }, '未绑定') : null,
+        charTrigger,
+        regenBtn,
+        delBtn,
+      ]),
+      textDiv,
+    ]);
+    // 拖拽策略：只有按住手柄才允许拖整块，避免 select/button 误触发
+    dragHandle.addEventListener('mousedown', () => { block.draggable = true; });
+    dragHandle.addEventListener('mouseup', () => { block.draggable = false; });
+    block.addEventListener('dragend', () => { block.draggable = false; });
+    return block;
+  }
+
+  /**
+   * 渲染角色选择触发按钮（懒加载）。
+   * 平时显示当前角色名（按钮），点击时才创建含所有角色的 select，选择后恢复为按钮。
+   * 避免每个对话段都生成 N 个 option（100 角色 × 1000 对话段 = 10 万 option）。
+   */
+  function renderCharTrigger(seg, novel) {
+    const chars = novel.characters || [];
+    const current = seg.characterId ? chars.find((c) => c.id === seg.characterId) : null;
+    const label = current ? current.name : '— 未绑定 —';
+    const trigger = Utils.el('button', {
+      class: 'seg-char-trigger' + (seg.characterId ? '' : ' unbound'),
+      title: '点击切换角色',
+    }, label);
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // 懒创建 select
+      const sel = Utils.el('select', { class: 'seg-char-select' });
+      sel.appendChild(Utils.el('option', { value: '' }, '— 未绑定 —'));
+      for (const c of chars) {
+        const opt = Utils.el('option', { value: c.id }, c.name);
+        if (seg.characterId === c.id) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      trigger.replaceWith(sel);
+      sel.focus();
+      // 尝试自动展开下拉（部分浏览器支持 showPicker）
+      try { if (sel.showPicker) sel.showPicker(); } catch (_) {}
+      let changed = false;
+      sel.addEventListener('change', async () => {
+        changed = true;
+        const newVal = sel.value;
+        const oldVal = seg.characterId;
+        try {
+          await API.updateSegment(novel.id, seg.id, { characterId: newVal });
+          seg.characterId = newVal || null;
+          const idx = segIndexMap.get(seg.id);
+          if (idx != null && currentNovel.segments[idx]) {
+            currentNovel.segments[idx].characterId = newVal || null;
+          }
+          updateSegBlockBindingDOM(seg.id);
+          // 重建 trigger 显示新角色名
+          sel.replaceWith(renderCharTrigger(seg, novel));
+          Utils.toast('已换绑角色', 'success');
+        } catch (err) {
+          sel.value = oldVal || '';
+          Utils.toast('换绑失败: ' + err.message, 'error');
+        }
+      });
+      sel.addEventListener('click', (e) => e.stopPropagation());
+      // 失焦时若未变更，恢复为 trigger
+      sel.addEventListener('blur', () => {
+        if (!changed) sel.replaceWith(renderCharTrigger(seg, novel));
+      });
+    });
+    return trigger;
+  }
+
+  /**
+   * 编辑段落文本（点击文本变 textarea，失焦/Ctrl+Enter 提交，Esc 取消）
+   */
+  function editSegmentText(seg, textDiv) {
+    const ta = Utils.el('textarea', { class: 'seg-text-editor' });
+    ta.value = seg.text;
+    ta.rows = Math.max(2, Math.ceil(seg.text.length / 50));
+    ta.style.width = '100%';
+    ta.style.resize = 'vertical';
+    textDiv.replaceWith(ta);
+    ta.focus();
+    ta.select();
+    let committed = false;
+    const commit = async () => {
+      if (committed) return;
+      committed = true;
+      const v = ta.value.trim();
+      if (v === seg.text) {
+        ta.replaceWith(textDiv);
+        return;
+      }
+      if (!v) {
+        ta.replaceWith(textDiv);
+        Utils.toast('段落文本不能为空', 'error');
+        return;
+      }
+      try {
+        await API.updateSegment(currentNovel.id, seg.id, { text: v });
+        seg.text = v;
+        const idx = segIndexMap.get(seg.id);
+        if (idx != null && currentNovel.segments[idx]) {
+          currentNovel.segments[idx].text = v;
+        }
+        textDiv.textContent = v;
+        ta.replaceWith(textDiv);
+        Utils.toast('已修改段落文本', 'success');
+      } catch (err) {
+        ta.replaceWith(textDiv);
+        Utils.toast('修改失败: ' + err.message, 'error');
+      }
+    };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      ta.replaceWith(textDiv);
+    };
+    ta.addEventListener('blur', commit);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    ta.addEventListener('click', (e) => e.stopPropagation());
+  }
+
+  /**
+   * 删除段落（调 API + 本地重排 order + 局部更新 DOM）
+   */
+  async function deleteSegment(seg) {
+    try {
+      await API.deleteSegment(currentNovel.id, seg.id);
+      currentNovel.segments = (currentNovel.segments || []).filter((s) => s.id !== seg.id);
+      currentNovel.segments.forEach((s, i) => { s.order = i; });
+      rebuildSegIndex();
+      Player.loadNovel(currentNovel);
+
+      // 保留滚动位置
+      const savedScroll = saveScrollPos();
+      // 若删除后当前页会空（删的是本页最后一条）且不是第 1 页，回退一页
+      const start = (pagination.page - 1) * PAGE_SIZE;
+      const willEmpty = start >= sortedSegments.length && pagination.page > 1;
+      if (willEmpty) pagination.page--;
+      // 重渲染当前页（成本 ≤ 100 block，比全量 renderDetail 快得多）
+      renderSegView();
+      restoreScrollPos(savedScroll);
+      updateSegCountLabel();
+      Utils.toast('已删除段落', 'success');
+    } catch (err) {
+      Utils.toast('删除失败: ' + err.message, 'error');
+    }
+  }
+
+  /**
+   * 绑定段落拖拽（HTML5 drag & drop）
+   */
+  function bindSegDragDrop(segView) {
+    let dragSrcId = null;
+    segView.addEventListener('dragstart', (e) => {
+      const block = e.target.closest('.seg-block');
+      if (!block) return;
+      dragSrcId = block.dataset.segId;
+      block.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', dragSrcId); } catch (_) {}
+    });
+    segView.addEventListener('dragend', (e) => {
+      const block = e.target.closest('.seg-block');
+      if (block) block.classList.remove('dragging');
+      segView.querySelectorAll('.seg-block.drag-over').forEach((b) => b.classList.remove('drag-over'));
+      dragSrcId = null;
+    });
+    segView.addEventListener('dragover', (e) => {
+      const block = e.target.closest('.seg-block');
+      if (!block || !dragSrcId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      segView.querySelectorAll('.seg-block.drag-over').forEach((b) => b.classList.remove('drag-over'));
+      if (block.dataset.segId !== dragSrcId) block.classList.add('drag-over');
+    });
+    segView.addEventListener('dragleave', (e) => {
+      const block = e.target.closest('.seg-block');
+      if (block) block.classList.remove('drag-over');
+    });
+    segView.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const block = e.target.closest('.seg-block');
+      if (!block || !dragSrcId) return;
+      // 关键：dragend 会在 drop 之后的同步阶段触发并把 dragSrcId 置 null，
+      // 而 await 之后的代码还需要用它，所以先存到局部变量
+      const srcId = dragSrcId;
+      const targetId = block.dataset.segId;
+      segView.querySelectorAll('.seg-block.drag-over').forEach((b) => b.classList.remove('drag-over'));
+      if (targetId === srcId) return;
+      try {
+        await API.moveSegment(currentNovel.id, srcId, targetId);
+        const segs = currentNovel.segments || [];
+        const fromIdx = segs.findIndex((s) => s.id === srcId);
+        const toIdx = segs.findIndex((s) => s.id === targetId);
+        if (fromIdx < 0 || toIdx < 0) return;
+        const [moved] = segs.splice(fromIdx, 1);
+        segs.splice(toIdx, 0, moved);
+        segs.forEach((s, i) => { s.order = i; });
+        rebuildSegIndex();
+        Player.loadNovel(currentNovel);
+
+        // 局部 DOM 节点交换（src 和 target 必定在同页，因为只能拖可见 block）
+        const srcBlock = Utils.$(`#segment-view .seg-block[data-seg-id="${srcId}"]`);
+        const targetBlock = Utils.$(`#segment-view .seg-block[data-seg-id="${targetId}"]`);
+        if (srcBlock && targetBlock && srcBlock !== targetBlock) {
+          // 简单稳妥的方式：重渲染当前页（100 block，比全量 renderDetail 快得多）
+          // 直接 DOM 交换在跨位置时逻辑复杂，重渲染更安全
+          renderSegView();
+        } else {
+          // 跨页拖拽（理论上不会发生），回退到重渲染当前页
+          renderSegView();
+        }
+        updateSegCountLabel();
+        Utils.toast('已调整段落顺序', 'success');
+      } catch (err) {
+        Utils.toast('调整顺序失败: ' + err.message, 'error');
+      }
+    });
   }
 
   /**
@@ -240,10 +622,10 @@ window.NovelManager = (function () {
     if (!seg) return;
     const unbound = seg.type === 'dialog' && !seg.characterId;
     block.classList.toggle('unbound', unbound);
-    // 添加/移除 未绑定 标记（位于 seg-type 之后）
+    // 添加/移除 未绑定 标记（位于 seg-type-select 之后）
     let flag = block.querySelector('.seg-unbound-flag');
     if (unbound && !flag) {
-      const segType = block.querySelector('.seg-type');
+      const segType = block.querySelector('.seg-type-select');
       flag = Utils.el('span', { class: 'seg-unbound-flag' }, '未绑定');
       if (segType && segType.nextSibling) segType.parentNode.insertBefore(flag, segType.nextSibling);
       else if (segType) segType.parentNode.appendChild(flag);
@@ -347,15 +729,20 @@ window.NovelManager = (function () {
       playBtn.disabled = false;
     }
 
-    // 高亮当前段
-    Utils.$$('#segment-view .seg-block').forEach((b) => {
-      b.classList.toggle('current', state.currentSegment && b.dataset.segId === state.currentSegment.id);
-    });
-
-    // 滚动到当前段
-    if (state.currentSegment) {
-      const cur = Utils.$(`#segment-view .seg-block[data-seg-id="${state.currentSegment.id}"]`);
-      if (cur) cur.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // 高亮当前段（增量更新：只动上一个和当前 block，避免 O(N) 遍历）
+    const curId = state.currentSegment ? state.currentSegment.id : null;
+    if (curId !== lastCurrentSegId) {
+      if (lastCurrentSegId) {
+        const old = Utils.$(`#segment-view .seg-block[data-seg-id="${lastCurrentSegId}"]`);
+        if (old) old.classList.remove('current');
+      }
+      if (curId) {
+        const cur = Utils.$(`#segment-view .seg-block[data-seg-id="${curId}"]`);
+        if (cur) cur.classList.add('current');
+        // 自动切页 + 滚动到当前段（若不在可见页则切换到对应页）
+        ensureSegmentVisible(curId);
+      }
+      lastCurrentSegId = curId;
     }
 
     // 段信息
@@ -471,6 +858,11 @@ window.NovelManager = (function () {
       currentNovel = novel;
       Player.loadNovel(novel);
       CharacterPanel.setNovel(novel);
+      // 重置分页状态（规则分段后段落数完全变化）
+      rebuildSegIndex();
+      pagination.page = 1;
+      lastCurrentSegId = null;
+      renderedSegIds.clear();
       renderDetail(novel);
       Utils.toast(`${btnLabel}完成: ${(novel.segments || []).length} 段, ${(novel.characters || []).length} 角色`, 'success');
     } catch (err) {
@@ -517,6 +909,11 @@ window.NovelManager = (function () {
     // 立即清空前端段落列表（不等后端），让用户感知到"已清空，等待新分段"
     if (mode !== 'continue') {
       currentNovel.segments = [];
+      // 重置分页状态
+      rebuildSegIndex();
+      pagination.page = 1;
+      lastCurrentSegId = null;
+      renderedSegIds.clear();
       renderDetail(currentNovel);
     }
 
@@ -533,12 +930,30 @@ window.NovelManager = (function () {
         const p = evt.data || {};
         if (evt.event === 'progress') {
           if (p.type === 'chunk-persisted') {
-            // 保存滚动位置（renderDetail 会重建列表导致回顶）
+            // 保存滚动位置
             const savedScroll = saveScrollPos();
-            // 增量刷新：用后端返回的 novel 直接更新视图
             currentNovel = p.novel;
-            renderDetail(currentNovel);
-            // 恢复滚动位置
+            rebuildSegIndex();
+            clampPage();  // 总段数变化后夹紧页码
+            // 仅当用户在最后一页时，增量追加新段（避免打断用户浏览其他页）
+            const isLastPage = pagination.page === totalPages();
+            if (isLastPage) {
+              const sv = Utils.$('#segment-view');
+              if (sv) {
+                const start = (pagination.page - 1) * PAGE_SIZE;
+                const end = Math.min(start + PAGE_SIZE, sortedSegments.length);
+                const frag = document.createDocumentFragment();
+                for (let i = start; i < end; i++) {
+                  const s = sortedSegments[i];
+                  if (!renderedSegIds.has(s.id)) {
+                    frag.appendChild(renderSegBlock(s, segIndexMap, currentNovel));
+                    renderedSegIds.add(s.id);
+                  }
+                }
+                if (frag.children.length > 0) sv.appendChild(frag);
+              }
+            }
+            updateSegCountLabel();
             restoreScrollPos(savedScroll);
             updateSegStatusBar(
               `分块分段中：第 ${p.chunkIndex}/${p.chunkTotal} 大段已持久化，已生成 ${p.segmentsSoFar} 段`,
@@ -582,6 +997,11 @@ window.NovelManager = (function () {
         currentNovel = data.novel;
         Player.loadNovel(currentNovel);
         CharacterPanel.setNovel(currentNovel);
+        // 全新分段结果：回到第 1 页
+        rebuildSegIndex();
+        pagination.page = 1;
+        lastCurrentSegId = null;
+        renderedSegIds.clear();
         renderDetail(currentNovel);
       }
       appendOverviewLog('分段完成', 'ok');

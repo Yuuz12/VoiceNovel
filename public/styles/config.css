@@ -151,6 +151,29 @@
   white-space: nowrap;
 }
 
+/* 音色选择触发按钮（懒加载：平时显示音色名，点击才创建 select） */
+.character-card .char-voice-trigger {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--primary);
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.character-card .char-voice-trigger.unbound {
+  color: var(--text-mute);
+}
+.character-card .char-voice-trigger:hover {
+  border-color: var(--primary);
+}
+
 .character-card .char-sliders {
   display: grid;
   grid-template-columns: 1fr 1fr;

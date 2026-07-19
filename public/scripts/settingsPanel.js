@@ -173,6 +173,7 @@ window.SettingsPanel = (function () {
     Utils.$('#set-max-seg-len').value = String((s.parsing && s.parsing.maxSegmentLength) || 200);
     Utils.$('#set-llm-chunk-size').value = String((s.parsing && s.parsing.llmChunkSize) || 1000);
     Utils.$('#set-llm-concurrency').value = String((s.parsing && s.parsing.concurrency) || 3);
+    Utils.$('#set-character-concurrency').value = String((s.parsing && s.parsing.characterConcurrency) || 3);
     Utils.$('#set-auto-seg').checked = !!(s.parsing && s.parsing.autoSegmentOnUpload);
     Utils.$('#set-gap-ms').value = String((s.playback && s.playback.gapBetweenSegments) || 300);
   }
@@ -408,6 +409,12 @@ window.SettingsPanel = (function () {
         llmChunkSize: parseInt(Utils.$('#set-llm-chunk-size').value, 10) || 1000,
         concurrency: (() => {
           const v = parseInt(Utils.$('#set-llm-concurrency').value, 10);
+          if (!Number.isFinite(v) || v < 1) return 1;
+          if (v > 10) return 10;
+          return v;
+        })(),
+        characterConcurrency: (() => {
+          const v = parseInt(Utils.$('#set-character-concurrency').value, 10);
           if (!Number.isFinite(v) || v < 1) return 1;
           if (v > 10) return 10;
           return v;
