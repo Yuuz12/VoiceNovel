@@ -326,10 +326,21 @@ window.CharacterPanel = (function () {
         e.target.value = '';
       });
 
+      // 删除当前选中的样本（全局删除，会清空所有角色/旁白对该样本的绑定）
+      const deleteBtn = Utils.el('button', { class: 'btn btn-danger btn-sm' }, '删除样本');
+      deleteBtn.addEventListener('click', () => {
+        const path = sel.value;
+        if (!path) { Utils.toast('请先选择要删除的样本', 'error'); return; }
+        const opt = sel.options[sel.selectedIndex];
+        const name = opt ? opt.textContent : path;
+        if (!confirm(`确定删除样本"${name}"？\n已绑定该样本的角色/旁白将自动清空绑定。`)) return;
+        deleteCloneSample(path);
+      });
+
       const nameSpan = Utils.el('span', { class: 'char-clone-name' },
         mimo.cloneSampleName || (mimo.cloneSamplePath ? '已绑定' : '未选择'));
 
-      const wrap = Utils.el('div', { class: 'char-clone-row' }, [sel, uploadBtn, fileInput, nameSpan]);
+      const wrap = Utils.el('div', { class: 'char-clone-row' }, [sel, uploadBtn, fileInput, deleteBtn, nameSpan]);
       return wrap;
     }
 
@@ -366,20 +377,60 @@ window.CharacterPanel = (function () {
     });
   }
 
-  async function updateCharacter(cid, partial) {
+  async function updateCharacter(cid, partial, opts) {
     if (!currentNovel) return;
     try {
       const updated = await API.updateCharacter(currentNovel.id, cid, partial);
       const idx = currentNovel.characters.findIndex((x) => x.id === cid);
       if (idx >= 0) currentNovel.characters[idx] = { ...currentNovel.characters[idx], ...updated };
       Player.loadNovel(currentNovel);
-      Utils.toast('已保存', 'success');
+      if (!opts || !opts.silent) Utils.toast('已保存', 'success');
     } catch (err) {
       Utils.toast('保存失败: ' + err.message, 'error');
     }
   }
 
-  function previewVoice(c) {
+  // 删除一个复刻样本文件，并清空所有角色对该样本的绑定；旁白绑定由 SettingsPanel 负责
+  async function deleteCloneSample(path) {
+    if (!path) return;
+    try {
+      await API.deleteVoiceSample(path);
+      await loadCloneSamples();
+      await clearSampleBindings(path);
+      // 通知设置面板刷新样本列表，并清空旁白失效绑定
+      if (window.SettingsPanel && SettingsPanel.handleSampleDeleted) {
+        try { await SettingsPanel.handleSampleDeleted(path); } catch (err) { console.error('sync settings after delete failed', err); }
+      }
+      render();
+      Utils.toast('样本已删除', 'success');
+    } catch (err) {
+      Utils.toast('删除失败: ' + err.message, 'error');
+    }
+  }
+
+  // 清空所有角色对某样本的绑定（样本被删后失效路径需清理）
+  async function clearSampleBindings(deletedPath) {
+    if (!currentNovel || !deletedPath) return;
+    const chars = currentNovel.characters || [];
+    let cleared = 0;
+    for (const c of chars) {
+      const mimo = (c.voiceConfig && c.voiceConfig.mimo) || {};
+      if (mimo.cloneSamplePath === deletedPath) {
+        c.voiceConfig = c.voiceConfig || {};
+        c.voiceConfig.mimo = c.voiceConfig.mimo || {};
+        c.voiceConfig.mimo.cloneSamplePath = '';
+        c.voiceConfig.mimo.cloneSampleName = '';
+        await updateCharacter(c.id, { voiceConfig: { mimo: { cloneSamplePath: '', cloneSampleName: '' } } }, { silent: true });
+        cleared++;
+      }
+    }
+    if (cleared > 0) {
+      render();
+      Utils.toast(`已清空 ${cleared} 个角色的失效样本绑定`, 'info');
+    }
+  }
+
+  async function previewVoice(c) {
     // 按 provider + mode 算 speaker
     let speaker = '';
     const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
@@ -393,6 +444,13 @@ window.CharacterPanel = (function () {
     } else {
       speaker = c.voiceId;
       if (!speaker) { Utils.toast('请先选择音色', 'error'); return; }
+    }
+    // 试听前先保存设置，确保后端读到最新 provider/mode（否则切换后不保存无法试听）
+    if (window.SettingsPanel && SettingsPanel.ensureSaved) {
+      try { await SettingsPanel.ensureSaved(); } catch (err) {
+        Utils.toast('保存设置失败，无法试听: ' + err.message, 'error');
+        return;
+      }
     }
     const text = c.description
       ? `你好，我是${c.name}。${c.description}`
@@ -448,5 +506,5 @@ window.CharacterPanel = (function () {
     });
   }
 
-  return { init, setNovel, render, refreshVoices };
+  return { init, setNovel, render, refreshVoices, clearSampleBindings };
 })();

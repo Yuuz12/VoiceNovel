@@ -230,6 +230,23 @@
   min-width: 160px;
 }
 
+.preview-text-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preview-text-row input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.preview-text-row .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* 角色卡片：MIMO 设计描述/复刻样本 行 */
 .character-card .char-mimo-design {
   margin-bottom: 6px;

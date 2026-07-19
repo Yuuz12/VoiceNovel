@@ -1,12 +1,28 @@
 // 设置面板：TTS（多 provider 切换）/ LLM / 旁白 / 分段 / 缓存
 // 支持火山方舟与小米 MIMO 两家 TTS 配置独立保存，切换不丢；MIMO 三模式：preset/voicedesign/voiceclone
 window.SettingsPanel = (function () {
+  const DEFAULT_NARRATION_PREVIEW_TEXT = '这是旁白音色的试听示例。沧海一声笑，滔滔两岸潮。';
+  const NARRATION_PREVIEW_TEXT_KEY = 'narration-preview-text';
+
   let voiceGroups = {};          // 当前 provider 的音色分组
   let dialogSymbols = [];
   let lastSettings = {};         // 当前已加载设置（供 fillNarrationVoiceSelect 等读取）
   let cloneSamples = [];         // 已上传复刻样本列表
   let currentProvider = 'volcano';
   let currentMimoMode = 'preset';
+
+  function loadNarrationPreviewText() {
+    try {
+      const v = localStorage.getItem(NARRATION_PREVIEW_TEXT_KEY);
+      return v && v.trim() ? v : DEFAULT_NARRATION_PREVIEW_TEXT;
+    } catch (_) {
+      return DEFAULT_NARRATION_PREVIEW_TEXT;
+    }
+  }
+
+  function saveNarrationPreviewText(text) {
+    try { localStorage.setItem(NARRATION_PREVIEW_TEXT_KEY, text || ''); } catch (_) {}
+  }
 
   async function init() {
     // 先读一次设置，确定当前 provider/mode，再据此加载音色目录与样本
@@ -59,10 +75,11 @@ window.SettingsPanel = (function () {
     });
     // MIMO 模式切换
     Utils.$('#set-tts-mimo-mode').addEventListener('change', () => onMimoModeChange());
-    // 旁白克隆样本上传
+    // 旁白克隆样本上传/删除
     Utils.$('#btn-narration-clone-upload').addEventListener('click', () => {
       Utils.$('#set-narration-clone-file').click();
     });
+    Utils.$('#btn-narration-clone-delete').addEventListener('click', deleteNarrationSample);
     Utils.$('#set-narration-clone-file').addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
       if (file) uploadNarrationSample(file);
@@ -76,6 +93,24 @@ window.SettingsPanel = (function () {
     const volumeSlider = Utils.$('#set-narration-volume');
     const volumeVal = Utils.$('#narration-volume-val');
     volumeSlider.addEventListener('input', () => volumeVal.textContent = volumeSlider.value);
+
+    // 试听文本自定义 + 重置
+    const previewTextInput = Utils.$('#set-narration-preview-text');
+    previewTextInput.value = loadNarrationPreviewText();
+    previewTextInput.addEventListener('change', () => {
+      const v = previewTextInput.value.trim();
+      if (!v) {
+        previewTextInput.value = DEFAULT_NARRATION_PREVIEW_TEXT;
+        saveNarrationPreviewText(DEFAULT_NARRATION_PREVIEW_TEXT);
+      } else {
+        saveNarrationPreviewText(v);
+      }
+    });
+    Utils.$('#btn-narration-preview-reset').addEventListener('click', () => {
+      previewTextInput.value = DEFAULT_NARRATION_PREVIEW_TEXT;
+      saveNarrationPreviewText(DEFAULT_NARRATION_PREVIEW_TEXT);
+      Utils.toast('已重置为默认试听文本', 'info');
+    });
   }
 
   async function load() {
@@ -136,7 +171,8 @@ window.SettingsPanel = (function () {
     renderSymbolList();
 
     Utils.$('#set-max-seg-len').value = String((s.parsing && s.parsing.maxSegmentLength) || 200);
-    Utils.$('#set-llm-chunk-size').value = String((s.parsing && s.parsing.llmChunkSize) || 2000);
+    Utils.$('#set-llm-chunk-size').value = String((s.parsing && s.parsing.llmChunkSize) || 1000);
+    Utils.$('#set-llm-concurrency').value = String((s.parsing && s.parsing.concurrency) || 3);
     Utils.$('#set-auto-seg').checked = !!(s.parsing && s.parsing.autoSegmentOnUpload);
     Utils.$('#set-gap-ms').value = String((s.playback && s.playback.gapBetweenSegments) || 300);
   }
@@ -235,6 +271,45 @@ window.SettingsPanel = (function () {
     }
   }
 
+  async function deleteNarrationSample() {
+    const sel = Utils.$('#set-narration-clone-select');
+    const path = sel.value;
+    if (!path) { Utils.toast('请先选择要删除的样本', 'error'); return; }
+    const name = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : path;
+    if (!confirm(`确定删除样本"${name}"？\n已绑定该样本的旁白/角色将自动清空绑定。`)) return;
+    try {
+      await API.deleteVoiceSample(path);
+      await loadCloneSamples();
+      // 若当前旁白绑定的是被删样本，清空选中并保存
+      const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+      if (narrMimo.cloneSamplePath === path) {
+        sel.value = '';
+        try { await ensureSaved(); } catch (err) { console.error('clear narration binding failed', err); }
+      }
+      fillNarrationCloneSelect();
+      // 通知角色面板清空失效的角色样本绑定
+      if (window.CharacterPanel && CharacterPanel.clearSampleBindings) {
+        await CharacterPanel.clearSampleBindings(path);
+      }
+      Utils.toast('样本已删除', 'success');
+    } catch (err) {
+      Utils.toast('删除失败: ' + err.message, 'error');
+    }
+  }
+
+  // 供角色面板调用：样本已在角色面板删除，此处只负责刷新本面板样本列表并清空旁白失效绑定
+  async function handleSampleDeleted(deletedPath) {
+    if (!deletedPath) return;
+    await loadCloneSamples();
+    const sel = Utils.$('#set-narration-clone-select');
+    const narrMimo = (lastSettings.narration && lastSettings.narration.voiceConfig && lastSettings.narration.voiceConfig.mimo) || {};
+    if (narrMimo.cloneSamplePath === deletedPath) {
+      sel.value = '';
+      try { await ensureSaved(); } catch (err) { console.error('clear narration binding failed', err); }
+    }
+    fillNarrationCloneSelect();
+  }
+
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -330,7 +405,13 @@ window.SettingsPanel = (function () {
       parsing: {
         dialogSymbols: dialogSymbols.filter((p) => p[0] && p[1]),
         maxSegmentLength: parseInt(Utils.$('#set-max-seg-len').value, 10) || 200,
-        llmChunkSize: parseInt(Utils.$('#set-llm-chunk-size').value, 10) || 2000,
+        llmChunkSize: parseInt(Utils.$('#set-llm-chunk-size').value, 10) || 1000,
+        concurrency: (() => {
+          const v = parseInt(Utils.$('#set-llm-concurrency').value, 10);
+          if (!Number.isFinite(v) || v < 1) return 1;
+          if (v > 10) return 10;
+          return v;
+        })(),
         autoSegmentOnUpload: Utils.$('#set-auto-seg').checked,
       },
       playback: {
@@ -387,7 +468,19 @@ window.SettingsPanel = (function () {
     }
   }
 
-  function previewNarration() {
+  // 静默保存设置（不弹 toast、不切换按钮态），供试听前确保后端读到最新 provider/mode
+  async function ensureSaved() {
+    const s = collectForm();
+    await API.saveSettings(s);
+    const fresh = await API.getSettings();
+    fillForm(fresh);
+    if (window.Player) Player.setGap(s.playback.gapBetweenSegments);
+    if (window.CharacterPanel && CharacterPanel.refreshVoices) {
+      CharacterPanel.refreshVoices(currentProvider, currentMimoMode);
+    }
+  }
+
+  async function previewNarration() {
     // 按 provider + mode 算 speaker
     let speaker = '';
     const isMimoDesign = (currentProvider === 'mimo' && currentMimoMode === 'voicedesign');
@@ -402,7 +495,15 @@ window.SettingsPanel = (function () {
       speaker = Utils.$('#set-narration-voice').value;
       if (!speaker) { Utils.toast('请选择旁白音色', 'error'); return; }
     }
-    const url = API.previewVoiceUrl(speaker, '这是旁白音色的试听示例。沧海一声笑，滔滔两岸潮。',
+    // 试听前先保存设置，确保后端读到最新 provider/mode（否则切换后不保存无法试听）
+    try {
+      await ensureSaved();
+    } catch (err) {
+      Utils.toast('保存设置失败，无法试听: ' + err.message, 'error');
+      return;
+    }
+    const previewText = Utils.$('#set-narration-preview-text').value.trim() || DEFAULT_NARRATION_PREVIEW_TEXT;
+    const url = API.previewVoiceUrl(speaker, previewText,
       parseInt(Utils.$('#set-narration-speed').value, 10),
       parseInt(Utils.$('#set-narration-volume').value, 10));
     const a = Utils.$('#preview-narration-audio');
@@ -437,5 +538,5 @@ window.SettingsPanel = (function () {
     el.className = 'result-hint' + (type ? ' ' + type : '');
   }
 
-  return { init, load, getProvider: () => currentProvider, getMimoMode: () => currentMimoMode };
+  return { init, load, ensureSaved, handleSampleDeleted, getProvider: () => currentProvider, getMimoMode: () => currentMimoMode };
 })();

@@ -470,23 +470,19 @@ async function segmentOneChunk(chunk, chunkIndex, chunkTotal, settings, opts = {
   const messages = [
     {
       role: 'system',
-      content: '你是一名小说分段助手。把小说文本切分为有序段落，每段标注是旁白还是某角色的对话。严格以 JSON 格式返回。',
+      content: '你是一名小说分段助手。把小说文本切分为有序段落，每段标注是旁白还是某角色的对话。每行一段，格式：N|旁白文本 或 D|角色名|对话文本。',
     },
     {
       role: 'user',
-      content: `请把以下小说文本（第 ${chunkIndex + 1}/${chunkTotal} 段）切分为多个段落，每段标注类型。
+      content: `请把以下小说文本（第 ${chunkIndex + 1}/${chunkTotal} 段）切分为多个段落。
 
-返回 JSON 格式：
-{
-  "segments": [
-    { "type": "narration", "text": "旁白段落原文", "characterName": null },
-    { "type": "dialog", "text": "对话内容（不含引号）", "characterName": "说话角色名" }
-  ]
-}
+每行一段，格式：
+N|旁白段落原文
+D|角色名|对话内容（不含引号）
 
 要求：
 1. 完整保留原文，不修改、不省略、不添加任何字
-2. 对话段落需识别说话角色名；若文本明确给出（如"林墨说"），用该名字；若无法判断则 characterName 填 null
+2. 对话段落需识别说话角色名；若文本明确给出（如"林墨说"），用该名字；若无法判断则角色名留空（D||对话）
 3. 连续旁白可合并为一段，但不要超过 200 字
 4. 段落顺序必须与原文一致
 
@@ -497,26 +493,29 @@ ${chunk}
     },
   ];
   const content = await chatStream(settings, messages, {
-    jsonMode: true, temperature: 0.2, signal: opts.signal,
+    temperature: 0.2, signal: opts.signal,
     onToken: (t) => onProgress && onProgress({
       type: 'token', task: 'segment',
       chunkIndex: chunkIndex + 1, chunkCount: chunkTotal,
       role: t.role, delta: t.delta, accumulated: t.accumulated,
     }),
   });
-  const parsed = extractJson(content);
+  // 解析行格式
   const segs = [];
-  if (parsed && Array.isArray(parsed.segments)) {
-    for (const s of parsed.segments) {
-      if (!s || typeof s.text !== 'string' || !s.text.trim()) continue;
-      segs.push({
-        type: s.type === 'dialog' ? 'dialog' : 'narration',
-        text: s.text.trim(),
-        characterName: s.characterName || null,
-      });
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l);
+  for (const line of lines) {
+    if (line.startsWith('N|')) {
+      const text = line.slice(2).trim();
+      if (text) segs.push({ type: 'narration', text, characterName: null });
+    } else if (line.startsWith('D|')) {
+      const parts = line.slice(2).split('|');
+      const characterName = parts[0] && parts[0].trim() ? parts[0].trim() : null;
+      const text = parts.slice(1).join('|').trim();
+      if (text) segs.push({ type: 'dialog', text, characterName });
     }
-  } else {
-    onProgress && onProgress({ type: 'warn', chunkIndex: chunkIndex + 1, message: `第 ${chunkIndex + 1} 段 JSON 解析失败，跳过` });
+  }
+  if (segs.length === 0) {
+    onProgress && onProgress({ type: 'warn', chunkIndex: chunkIndex + 1, message: `第 ${chunkIndex + 1} 段解析失败，跳过` });
   }
   onProgress && onProgress({
     type: 'chunk', task: 'segment',

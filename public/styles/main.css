@@ -454,6 +454,14 @@ label {
   color: var(--text-mute);
 }
 
+.form-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-mute);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
 .result-hint.ok {
   color: var(--success);
 }

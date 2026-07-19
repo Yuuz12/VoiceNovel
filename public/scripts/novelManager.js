@@ -4,6 +4,15 @@ window.NovelManager = (function () {
   let voiceCatalog = [];
   let voiceGroups = {};
 
+  // 播放器 SVG 图标（Material Design 风格，fill=currentColor 自动跟随按钮颜色）
+  const ICONS = {
+    prev: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6V6zm3.5 6l8.5 6V6l-8.5 6z"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>',
+  };
+
   async function init() {
     bindEvents();
     await refreshList();
@@ -272,12 +281,16 @@ window.NovelManager = (function () {
   function renderPlayerBar(novel) {
     const bar = Utils.el('div', { class: 'player-bar' });
 
-    const controls = Utils.el('div', { class: 'player-controls' }, [
-      Utils.el('button', { class: 'player-btn', id: 'btn-prev', onclick: () => Player.prev() }, '◄◄'),
-      Utils.el('button', { class: 'player-btn play-btn', id: 'btn-play', onclick: () => Player.togglePlay() }, '►'),
-      Utils.el('button', { class: 'player-btn', id: 'btn-next', onclick: () => Player.next() }, '►►'),
-      Utils.el('button', { class: 'player-btn', id: 'btn-stop', onclick: () => Player.stop() }, '■'),
-    ]);
+    const prevBtn = Utils.el('button', { class: 'player-btn', id: 'btn-prev', onclick: () => Player.prev(), title: '上一段' });
+    prevBtn.innerHTML = ICONS.prev;
+    const playBtn = Utils.el('button', { class: 'player-btn play-btn', id: 'btn-play', onclick: () => Player.togglePlay(), title: '播放/暂停' });
+    playBtn.innerHTML = ICONS.play;
+    const nextBtn = Utils.el('button', { class: 'player-btn', id: 'btn-next', onclick: () => Player.next(), title: '下一段' });
+    nextBtn.innerHTML = ICONS.next;
+    const stopBtn = Utils.el('button', { class: 'player-btn', id: 'btn-stop', onclick: () => Player.stop(), title: '停止' });
+    stopBtn.innerHTML = ICONS.stop;
+
+    const controls = Utils.el('div', { class: 'player-controls' }, [prevBtn, playBtn, nextBtn, stopBtn]);
 
     const info = Utils.el('div', { class: 'player-info' }, [
       Utils.el('div', { class: 'player-segment-info', id: 'player-segment-info' }, [
@@ -324,13 +337,13 @@ window.NovelManager = (function () {
     const playBtn = Utils.$('#btn-play');
     if (!playBtn) return;
     if (state.isFetching) {
-      playBtn.textContent = '…';
+      playBtn.innerHTML = '<span class="spinner"></span>';
       playBtn.disabled = true;
     } else if (state.isPlaying && !state.audioPaused) {
-      playBtn.textContent = '‖';
+      playBtn.innerHTML = ICONS.pause;
       playBtn.disabled = false;
     } else {
-      playBtn.textContent = '►';
+      playBtn.innerHTML = ICONS.play;
       playBtn.disabled = false;
     }
 
@@ -465,12 +478,13 @@ window.NovelManager = (function () {
     }
   }
 
-  // === LLM 增量分段（非阻塞状态条 + 可取消可继续 + 实时输出日志）===
+  // === LLM 增量分段（非阻塞状态条 + 可取消可继续 + 分块标签页实时输出）===
   let segController = null;
-  // 当前正在流式追加的 token 行（同 role 的 delta 追加到同一行，role 切换或新块开始时新建行）
-  let segLogCurrentLine = null;
-  let segLogCurrentRole = null;
   const SEG_LOG_MAX_LINES = 300;
+  // 分块标签页状态：chunkIndex(1-based) -> { tab, log, currentLine, currentRole, completed }
+  let chunkTabs = {};
+  let activeChunkIdx = 0; // 当前显示的分块（1-based，0=总览）
+  let chunkTotal = 0;
 
   async function startLLMSegmentation(mode) {
     // mode: 'start' | 'continue' | 'fresh'
@@ -494,17 +508,25 @@ window.NovelManager = (function () {
       if (!confirm('确定要重新 LLM 智能分段吗？这将清空当前段落并重新分段（角色列表与音色配置保留）。')) return;
     }
 
+    // 需求4：点击 LLM 智能分段始终清空段落列表并重新开始（start/fresh 都发 fresh）
     const body = mode === 'continue'
       ? { continue: true }
-      : mode === 'fresh'
-        ? { fresh: true }
-        : {};
+      : { fresh: true };
     if (!hasChars) body.forceEmpty = true; // 执意继续
 
+    // 立即清空前端段落列表（不等后端），让用户感知到"已清空，等待新分段"
+    if (mode !== 'continue') {
+      currentNovel.segments = [];
+      renderDetail(currentNovel);
+    }
+
     segController = new AbortController();
-    // 创建/重置状态条（含日志区），默认展开实时输出
+    // 重置分块标签页状态
+    chunkTabs = {};
+    activeChunkIdx = 0;
+    chunkTotal = 0;
+    // 创建/重置状态条（含分块标签页），默认展开
     showSegStatusBar('分块分段中：准备中...', { cancellable: true, showLog: true });
-    resetSegLog();
 
     try {
       const data = await API.streamSegmentLLM(currentNovel.id, body, (evt) => {
@@ -519,30 +541,32 @@ window.NovelManager = (function () {
             // 恢复滚动位置
             restoreScrollPos(savedScroll);
             updateSegStatusBar(
-              `分块分段中：第 ${p.chunkIndex}/${p.chunkTotal} 大段，已生成 ${p.segmentsSoFar} 段`,
+              `分块分段中：第 ${p.chunkIndex}/${p.chunkTotal} 大段已持久化，已生成 ${p.segmentsSoFar} 段`,
               { cancellable: true }
             );
-            // 块持久化后加分隔线到日志
-            appendSegLogLine(`── 第 ${p.chunkIndex}/${p.chunkTotal} 块完成，已持久化 ──`, 'chunk');
           } else if (p.type === 'start') {
             const startIdx = p.startChunkIndex || 0;
+            chunkTotal = p.chunkTotal || 0;
+            initChunkTabs(chunkTotal, startIdx);
             updateSegStatusBar(
-              startIdx > 0 ? `从第 ${startIdx + 1} 块继续，共 ${p.chunkTotal} 块...` : `开始处理，共 ${p.chunkTotal} 块...`,
+              startIdx > 0 ? `从第 ${startIdx + 1} 块继续，共 ${chunkTotal} 块...` : `开始处理，共 ${chunkTotal} 块...`,
               { cancellable: true }
             );
-            appendSegLogLine(
-              startIdx > 0 ? `── 从第 ${startIdx + 1} 块继续，共 ${p.chunkTotal} 块 ──` : `── 开始处理，共 ${p.chunkTotal} 块 ──`,
-              'chunk'
-            );
+            appendOverviewLog(startIdx > 0
+              ? `── 从第 ${startIdx + 1} 块继续，共 ${chunkTotal} 块 ──`
+              : `── 开始处理，共 ${chunkTotal} 块 ──`, 'chunk');
           } else if (p.type === 'token') {
-            // 实时追加 LLM token 到日志区（reasoning 灰色斜体，content 正常色）
-            appendSegLogToken(p.role, p.delta || '');
+            // 实时追加 LLM token 到对应分块的日志区
+            appendChunkToken(p.chunkIndex, p.role, p.delta || '');
           } else if (p.type === 'chunk') {
-            // 单块 LLM 返回完成：重置 token 行，下块新建
-            segLogCurrentLine = null;
-            segLogCurrentRole = null;
+            // 单块 LLM 返回完成：重置该块 token 行
+            resetChunkTokenLine(p.chunkIndex);
+          } else if (p.type === 'chunk-done') {
+            // 某分块完成：标记为绿色
+            markChunkDone(p.chunkIndex);
           } else if (p.type === 'warn') {
-            appendSegLogLine('警告: ' + (p.message || '警告'), 'warn');
+            appendOverviewLog('警告: ' + (p.message || '警告'), 'warn');
+            if (p.chunkIndex) appendChunkLog(p.chunkIndex, '警告: ' + (p.message || '警告'), 'warn');
           }
         } else if (evt.event === 'error') {
           if (p.code === 'NO_CHARACTERS') {
@@ -550,7 +574,7 @@ window.NovelManager = (function () {
           } else {
             Utils.toast('分段错误: ' + (p.message || '未知错误'), 'error');
           }
-          appendSegLogLine('错误: ' + (p.message || '未知错误'), 'error');
+          appendOverviewLog('错误: ' + (p.message || '未知错误'), 'error');
         }
       }, segController.signal);
       // done
@@ -560,7 +584,7 @@ window.NovelManager = (function () {
         CharacterPanel.setNovel(currentNovel);
         renderDetail(currentNovel);
       }
-      appendSegLogLine('分段完成', 'ok');
+      appendOverviewLog('分段完成', 'ok');
       updateSegStatusBar('分段完成', { done: true });
       const unbound = (currentNovel.segments || []).filter((s) => s.type === 'dialog' && !s.characterId).length;
       const tip = unbound > 0
@@ -569,7 +593,7 @@ window.NovelManager = (function () {
       Utils.toast(tip, unbound > 0 ? 'info' : 'success');
     } catch (err) {
       if (err && (err.name === 'AbortError' || err.code === 'ABORTED')) {
-        appendSegLogLine('已取消', 'cancel');
+        appendOverviewLog('已取消', 'cancel');
         // 取消：刷新已分段数据，显示继续按钮
         await refreshCurrent();
         try {
@@ -584,7 +608,7 @@ window.NovelManager = (function () {
           }
         } catch (_) { updateSegStatusBar('已取消', { done: true }); }
       } else {
-        appendSegLogLine('失败: ' + (err && err.message), 'error');
+        appendOverviewLog('失败: ' + (err && err.message), 'error');
         Utils.toast('分段失败: ' + (err && err.message), 'error');
         updateSegStatusBar('分段失败', { done: true });
       }
@@ -597,7 +621,9 @@ window.NovelManager = (function () {
    * 显示/更新分段状态条。结构：
    *   #seg-status-bar
    *     #seg-status-line  （状态行：文字 + 按钮，可重建）
-   *     #seg-status-log   （实时输出日志区，持久不重建）
+   *     #seg-chunk-wrap   （分块标签页容器：标签栏 + 日志区，持久不重建）
+   *       #seg-chunk-tabs （标签栏：总览 + 每块一个标签）
+   *       #seg-chunk-logs （日志区：每个块一个 div，切换显示）
    * opts: { cancellable, showContinue, done, showLog }
    */
   function showSegStatusBar(text, opts) {
@@ -606,33 +632,38 @@ window.NovelManager = (function () {
     if (!bar) {
       bar = Utils.el('div', { id: 'seg-status-bar', class: 'seg-status-bar' });
       const line = Utils.el('div', { id: 'seg-status-line', class: 'seg-status-line' });
-      const log = Utils.el('div', { id: 'seg-status-log', class: 'seg-status-log hidden' });
+      const wrap = Utils.el('div', { id: 'seg-chunk-wrap', class: 'seg-chunk-wrap hidden' });
+      const tabs = Utils.el('div', { id: 'seg-chunk-tabs', class: 'seg-chunk-tabs' });
+      const logs = Utils.el('div', { id: 'seg-chunk-logs', class: 'seg-chunk-logs' });
+      wrap.appendChild(tabs);
+      wrap.appendChild(logs);
       bar.appendChild(line);
-      bar.appendChild(log);
+      bar.appendChild(wrap);
       const toolbar = Utils.$('.segment-toolbar');
       if (toolbar) toolbar.after(bar);
       else Utils.$('#novel-content').appendChild(bar);
     }
-    // 只重建状态行（保留日志区内容）
+    // 只重建状态行（保留标签页内容）
     const line = Utils.$('#seg-status-line');
     line.innerHTML = '';
     line.appendChild(Utils.el('span', { class: 'seg-status-text' }, text));
 
-    // 实时输出切换按钮（日志区有内容或 showLog 时显示）
-    const log = Utils.$('#seg-status-log');
-    const hasLog = log && log.children.length > 0;
-    if (hasLog || opts.showLog) {
-      const toggleBtn = Utils.el('button', { class: 'btn btn-link btn-sm seg-log-toggle' },
-        (log && !log.classList.contains('hidden')) ? '隐藏输出' : '实时输出');
-      toggleBtn.addEventListener('click', () => {
-        const lg = Utils.$('#seg-status-log');
-        if (!lg) return;
-        lg.classList.toggle('hidden');
-        toggleBtn.textContent = lg.classList.contains('hidden') ? '实时输出' : '隐藏输出';
-        if (!lg.classList.contains('hidden')) lg.scrollTop = lg.scrollHeight;
-      });
-      line.appendChild(toggleBtn);
-    }
+    // 实时输出切换按钮
+    const wrap = Utils.$('#seg-chunk-wrap');
+    const isHidden = wrap && wrap.classList.contains('hidden');
+    const toggleBtn = Utils.el('button', { class: 'btn btn-link btn-sm seg-log-toggle' },
+      isHidden ? '实时输出' : '隐藏输出');
+    toggleBtn.addEventListener('click', () => {
+      const w = Utils.$('#seg-chunk-wrap');
+      if (!w) return;
+      w.classList.toggle('hidden');
+      toggleBtn.textContent = w.classList.contains('hidden') ? '实时输出' : '隐藏输出';
+      if (!w.classList.contains('hidden')) {
+        const activeLog = Utils.$('#seg-chunk-logs .seg-log.active');
+        if (activeLog) activeLog.scrollTop = activeLog.scrollHeight;
+      }
+    });
+    line.appendChild(toggleBtn);
 
     if (opts.cancellable) {
       const cancelBtn = Utils.el('button', { class: 'btn btn-danger btn-sm' }, '取消分段');
@@ -660,56 +691,131 @@ window.NovelManager = (function () {
       closeBtn.addEventListener('click', () => hideSegStatusBar());
       line.appendChild(closeBtn);
     }
-    // showLog 时默认展开日志区
-    if (opts.showLog && log) log.classList.remove('hidden');
+    // showLog 时默认展开
+    if (opts.showLog && wrap) wrap.classList.remove('hidden');
     bar.classList.remove('hidden');
   }
 
   function updateSegStatusBar(text, opts) {
-    // 复用 showSegStatusBar 重建状态行（保留日志区）
     showSegStatusBar(text, opts);
   }
 
   function hideSegStatusBar() {
     const bar = Utils.$('#seg-status-bar');
     if (bar) bar.remove();
-    segLogCurrentLine = null;
-    segLogCurrentRole = null;
+    chunkTabs = {};
+    activeChunkIdx = 0;
+    chunkTotal = 0;
   }
 
-  // === 实时输出日志区操作 ===
-  function resetSegLog() {
-    const log = Utils.$('#seg-status-log');
-    if (!log) return;
-    log.innerHTML = '';
-    segLogCurrentLine = null;
-    segLogCurrentRole = null;
+  // === 分块标签页操作 ===
+
+  // 初始化分块标签页：创建"总览" + 每个 chunk 一个标签
+  function initChunkTabs(total, startIdx) {
+    const tabsEl = Utils.$('#seg-chunk-tabs');
+    const logsEl = Utils.$('#seg-chunk-logs');
+    if (!tabsEl || !logsEl) return;
+    tabsEl.innerHTML = '';
+    logsEl.innerHTML = '';
+    chunkTabs = {};
+
+    // 总览标签
+    const overviewTab = Utils.el('button', { class: 'seg-chunk-tab active', dataset: { idx: '0' } }, '总览');
+    overviewTab.addEventListener('click', () => switchChunkTab(0));
+    tabsEl.appendChild(overviewTab);
+    const overviewLog = Utils.el('div', { class: 'seg-log active', dataset: { idx: '0' } });
+    logsEl.appendChild(overviewLog);
+    chunkTabs[0] = { tab: overviewTab, log: overviewLog, completed: false };
+
+    // 每个 chunk 一个标签
+    for (let i = 1; i <= total; i++) {
+      const tab = Utils.el('button', { class: 'seg-chunk-tab', dataset: { idx: String(i) } }, `块 ${i}`);
+      if (i <= startIdx) tab.classList.add('done'); // 已完成的块（继续模式）
+      tab.addEventListener('click', () => switchChunkTab(i));
+      tabsEl.appendChild(tab);
+      const log = Utils.el('div', { class: 'seg-log', dataset: { idx: String(i) } });
+      if (i <= startIdx) {
+        log.appendChild(Utils.el('div', { class: 'seg-log-line ok' }, '该块已完成（继续模式）'));
+      }
+      logsEl.appendChild(log);
+      chunkTabs[i] = { tab, log, currentLine: null, currentRole: null, completed: i <= startIdx };
+    }
+    activeChunkIdx = 0;
   }
 
-  function appendSegLogToken(role, delta) {
+  // 切换到指定分块标签
+  function switchChunkTab(idx) {
+    activeChunkIdx = idx;
+    const tabsEl = Utils.$('#seg-chunk-tabs');
+    const logsEl = Utils.$('#seg-chunk-logs');
+    if (!tabsEl || !logsEl) return;
+    for (const t of tabsEl.children) {
+      t.classList.toggle('active', parseInt(t.dataset.idx, 10) === idx);
+    }
+    for (const l of logsEl.children) {
+      l.classList.toggle('active', parseInt(l.dataset.idx, 10) === idx);
+    }
+    const activeLog = logsEl.querySelector('.seg-log.active');
+    if (activeLog) activeLog.scrollTop = activeLog.scrollHeight;
+  }
+
+  // 向指定分块追加 token（自动切换到该块第一次输出）
+  function appendChunkToken(chunkIdx, role, delta) {
     if (!delta) return;
-    const log = Utils.$('#seg-status-log');
+    const entry = chunkTabs[chunkIdx];
+    if (!entry) return;
+    const log = entry.log;
     if (!log) return;
-    if (!segLogCurrentLine || segLogCurrentRole !== role) {
+    if (!entry.currentLine || entry.currentRole !== role) {
       const prefix = role === 'reasoning' ? '[思考] ' : '[输出] ';
-      segLogCurrentLine = Utils.el('div', { class: 'seg-log-line ' + role }, prefix);
-      log.appendChild(segLogCurrentLine);
-      segLogCurrentRole = role;
+      entry.currentLine = Utils.el('div', { class: 'seg-log-line ' + role }, prefix);
+      log.appendChild(entry.currentLine);
+      entry.currentRole = role;
       while (log.childNodes.length > SEG_LOG_MAX_LINES) log.removeChild(log.firstChild);
     }
-    segLogCurrentLine.textContent += delta;
-    if (!log.classList.contains('hidden')) log.scrollTop = log.scrollHeight;
+    entry.currentLine.textContent += delta;
+    if (activeChunkIdx === chunkIdx && !log.classList.contains('hidden')) {
+      log.scrollTop = log.scrollHeight;
+    }
   }
 
-  function appendSegLogLine(text, kind) {
-    const log = Utils.$('#seg-status-log');
-    if (!log) return;
+  // 重置某块的当前 token 行（chunk LLM 返回完成时调用）
+  function resetChunkTokenLine(chunkIdx) {
+    const entry = chunkTabs[chunkIdx];
+    if (!entry) return;
+    entry.currentLine = null;
+    entry.currentRole = null;
+  }
+
+  // 标记某块完成（变绿）
+  function markChunkDone(chunkIdx) {
+    const entry = chunkTabs[chunkIdx];
+    if (!entry) return;
+    entry.completed = true;
+    entry.tab.classList.add('done');
+    appendChunkLog(chunkIdx, '── 该块 LLM 处理完成 ──', 'ok');
+  }
+
+  // 向指定分块日志追加一行
+  function appendChunkLog(chunkIdx, text, kind) {
+    const entry = chunkTabs[chunkIdx];
+    if (!entry || !entry.log) return;
     const line = Utils.el('div', { class: 'seg-log-line' + (kind ? ' ' + kind : '') }, text);
-    log.appendChild(line);
-    segLogCurrentLine = null;
-    segLogCurrentRole = null;
-    while (log.childNodes.length > SEG_LOG_MAX_LINES) log.removeChild(log.firstChild);
-    if (!log.classList.contains('hidden')) log.scrollTop = log.scrollHeight;
+    entry.log.appendChild(line);
+    entry.currentLine = null;
+    entry.currentRole = null;
+    while (entry.log.childNodes.length > SEG_LOG_MAX_LINES) entry.log.removeChild(entry.log.firstChild);
+    if (activeChunkIdx === chunkIdx) entry.log.scrollTop = entry.log.scrollHeight;
+  }
+
+  // 向总览日志追加一行
+  function appendOverviewLog(text, kind) {
+    const entry = chunkTabs[0];
+    if (!entry || !entry.log) return;
+    const line = Utils.el('div', { class: 'seg-log-line' + (kind ? ' ' + kind : '') }, text);
+    entry.log.appendChild(line);
+    while (entry.log.childNodes.length > SEG_LOG_MAX_LINES) entry.log.removeChild(entry.log.firstChild);
+    if (activeChunkIdx === 0) entry.log.scrollTop = entry.log.scrollHeight;
   }
 
   async function deleteNovel(id) {

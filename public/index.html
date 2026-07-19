@@ -176,6 +176,7 @@
               <select id="set-narration-clone-select"><option value="">— 选择已上传样本 —</option></select>
               <input type="file" id="set-narration-clone-file" accept="audio/mp3,audio/wav,audio/ogg,audio/m4a,audio/aac" hidden />
               <button class="btn btn-secondary btn-sm" id="btn-narration-clone-upload">上传新样本</button>
+              <button class="btn btn-danger btn-sm" id="btn-narration-clone-delete">删除样本</button>
               <span id="narration-clone-name" class="result-hint">未选择</span>
             </div>
           </div>
@@ -186,6 +187,13 @@
           <div class="form-row">
             <label>音量 <span class="value-tag" id="narration-volume-val">0</span></label>
             <input type="range" id="set-narration-volume" min="-50" max="100" value="0" />
+          </div>
+          <div class="form-row">
+            <label>试听文本</label>
+            <div class="preview-text-row">
+              <input type="text" id="set-narration-preview-text" placeholder="自定义试听文本" />
+              <button class="btn btn-secondary btn-sm" id="btn-narration-preview-reset" type="button">重置</button>
+            </div>
           </div>
           <div class="form-actions">
             <button class="btn btn-secondary" id="btn-preview-narration">试听</button>
@@ -206,7 +214,12 @@
           </div>
           <div class="form-row">
             <label>LLM 分块字数（长文按此字数切块逐段处理，避免超时）</label>
-            <input type="number" id="set-llm-chunk-size" min="500" max="20000" step="100" value="2000" />
+            <input type="number" id="set-llm-chunk-size" min="500" max="20000" step="100" value="1000" />
+          </div>
+          <div class="form-row">
+            <label>并行处理块数（同时处理的分块数量，默认3）</label>
+            <input type="number" id="set-llm-concurrency" min="1" max="10" step="1" value="3" />
+            <span class="form-hint">按你的 LLM 接口速率限制（RPM）填写，过高可能触发限流报错</span>
           </div>
           <div class="form-row checkbox-row">
             <input type="checkbox" id="set-auto-seg" />

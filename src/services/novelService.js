@@ -384,7 +384,8 @@ async function segmentNovelLLM(id, opts = {}) {
     throw err;
   }
 
-  const chunkSize = settings.parsing.llmChunkSize || 2000;
+  const chunkSize = settings.parsing.llmChunkSize || 1000;
+  const concurrency = Math.max(1, Math.min(10, settings.parsing.concurrency || 3));
 
   // 确定起始块索引
   let startChunkIndex = 0;
@@ -445,26 +446,22 @@ async function segmentNovelLLM(id, opts = {}) {
   // 收集未匹配到已有角色的 characterName，结束后汇总提示用户
   const unmatchedNames = new Set();
 
-  // 逐块处理
-  for (let i = startChunkIndex; i < chunkTotal; i++) {
-    if (opts.signal && opts.signal.aborted) {
-      const err = new Error('已取消');
-      err.code = 'ABORTED';
-      throw err;
-    }
+  // 并行处理（带并发限制）+ 按顺序持久化
+  // 每个 chunk 的 LLM 调用并行执行，但结果按原始顺序持久化（确保段落顺序正确）
+  const pendingChunks = chunks.slice(startChunkIndex);
+  const chunkCount = pendingChunks.length;
+  const results = new Array(chunkCount);
+  let nextPersistIdx = 0; // 下一个待持久化的 chunk 序号
 
-    // 调 LLM 处理单块（segmentOneChunk 透传 opts.signal + opts.onProgress）
-    const chunkSegs = await llmService.segmentOneChunk(chunks[i], i, chunkTotal, settings.llm, opts);
-
-    // 转换为内部格式 + 角色匹配（只复用已有角色，找不到则 null）
+  // 持久化第 idx 个 chunk 的结果（按顺序调用，确保段落 order 正确）
+  const persistChunk = (idx, chunkSegs) => {
+    const i = startChunkIndex + idx;
     for (const s of chunkSegs) {
       const pieces = splitLongSegment(s.text, settings.parsing.maxSegmentLength || 200);
       for (const piece of pieces) {
         if (!piece) continue;
         const cid = hasChars ? matchCharacterId(s.characterName, novel.characters) : null;
-        // 收集未匹配的 characterName（有角色列表 + LLM 给了名字但没匹配上）
         if (hasChars && s.characterName && !cid) unmatchedNames.add(s.characterName);
-        // 累加对应角色的 appearances 计数（仅当成功匹配时）
         if (cid) {
           const matched = (novel.characters || []).find((c) => c.id === cid);
           if (matched) matched.appearances = (matched.appearances || 0) + 1;
@@ -478,20 +475,62 @@ async function segmentNovelLLM(id, opts = {}) {
         });
       }
     }
-
-    // 增量持久化：每块完成立即写盘 + 更新进度文件
     saveNovel(novel);
     progress.chunkIndex = i + 1;
     saveSegmentProgress(progress);
-
-    // 推送增量进度（含 novel，前端直接刷新段落列表）
     opts.onProgress && opts.onProgress({
       type: 'chunk-persisted',
       chunkIndex: i + 1, chunkTotal,
       segmentsSoFar: novel.segments.length,
       novel,
     });
+  };
+
+  // 按顺序持久化已完成的 chunk（某 chunk 完成后，若它之前的都已持久化，则持久化它及后续连续完成的）
+  const tryPersistInOrder = () => {
+    while (nextPersistIdx < chunkCount && results[nextPersistIdx] !== undefined) {
+      persistChunk(nextPersistIdx, results[nextPersistIdx]);
+      nextPersistIdx++;
+    }
+  };
+
+  // 并发 worker：不断领取未处理的 chunk 直到全部完成或出错
+  let workerIndex = 0;
+  let workerError = null;
+  const worker = async () => {
+    while (workerIndex < chunkCount && !workerError) {
+      if (opts.signal && opts.signal.aborted) {
+        const err = new Error('已取消');
+        err.code = 'ABORTED';
+        workerError = err;
+        return;
+      }
+      const idx = workerIndex++;
+      const i = startChunkIndex + idx;
+      try {
+        const segs = await llmService.segmentOneChunk(pendingChunks[idx], i, chunkTotal, settings.llm, opts);
+        results[idx] = segs;
+        // 标记该 chunk 完成（供前端变绿）
+        opts.onProgress && opts.onProgress({
+          type: 'chunk-done',
+          chunkIndex: i + 1, chunkTotal,
+        });
+        // 尝试按顺序持久化
+        tryPersistInOrder();
+      } catch (err) {
+        workerError = err;
+        return;
+      }
+    }
+  };
+
+  // 启动 concurrency 个 worker
+  const workers = [];
+  for (let w = 0; w < Math.min(concurrency, chunkCount); w++) {
+    workers.push(worker());
   }
+  await Promise.all(workers);
+  if (workerError) throw workerError;
 
   // 全部完成：若有未匹配的角色名，汇总提示用户（前端在实时输出日志区显示）
   if (unmatchedNames.size > 0) {

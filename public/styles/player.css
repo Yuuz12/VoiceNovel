@@ -55,9 +55,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
   transition: all 0.15s;
   border: 1px solid var(--border);
+}
+
+.player-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  pointer-events: none;
 }
 
 .player-btn:hover {
@@ -70,7 +76,19 @@
   background: var(--primary);
   color: #fff;
   border-color: var(--primary);
-  font-size: 16px;
+}
+
+.player-btn.play-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 加载中：播放按钮上的白色 spinner（覆盖默认 primary 顶色，避免与背景同色） */
+.player-btn.play-btn .spinner {
+  width: 18px;
+  height: 18px;
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
 }
 
 .player-btn.play-btn:hover {
@@ -339,6 +357,69 @@
 }
 .seg-status-log.hidden {
   display: none;
+}
+/* 分块标签页容器 */
+.seg-chunk-wrap {
+  margin-top: 4px;
+}
+.seg-chunk-wrap.hidden {
+  display: none;
+}
+.seg-chunk-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 2px;
+  max-height: 80px;
+  overflow-y: auto;
+}
+.seg-chunk-tab {
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  color: var(--text-mute);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.seg-chunk-tab:hover {
+  border-color: var(--primary, #3498db);
+  color: var(--text);
+}
+.seg-chunk-tab.active {
+  background: var(--primary, #3498db);
+  color: #fff;
+  border-color: var(--primary, #3498db);
+}
+.seg-chunk-tab.done {
+  background: var(--success, #27ae60);
+  color: #fff;
+  border-color: var(--success, #27ae60);
+}
+.seg-chunk-tab.done.active {
+  background: var(--success, #27ae60);
+  color: #fff;
+}
+.seg-chunk-logs {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  background: var(--bg, #fafafa);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.seg-chunk-logs .seg-log {
+  display: none;
+}
+.seg-chunk-logs .seg-log.active {
+  display: block;
 }
 .seg-log-line {
   padding: 1px 0;
