@@ -69,7 +69,8 @@ window.CharacterPanel = (function () {
 
     const actions = Utils.el('div', { class: 'panel-actions' }, [
       Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => extractCharacters() }, 'LLM 提取角色'),
-      Utils.el('button', { class: 'btn btn-primary btn-sm', onclick: () => autoMatch() }, '一键智能匹配音色'),
+      Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => autoMatch() }, 'LLM 匹配音色'),
+      Utils.el('button', { class: 'btn btn-primary btn-sm', onclick: () => extractAndMatch() }, '一键提取匹配'),
       Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => addCharacter() }, '添加角色'),
     ]);
 
@@ -564,7 +565,7 @@ window.CharacterPanel = (function () {
   function autoMatch() {
     if (!currentNovel) return;
     ProgressModal.run({
-      title: 'LLM 智能匹配音色',
+      title: 'LLM 匹配音色',
       streamFn: (onEvent, signal) => API.streamAutoMatchVoices(currentNovel.id, onEvent, signal),
       onComplete: (data) => {
         currentNovel = { ...currentNovel, characters: data.characters };
@@ -574,6 +575,47 @@ window.CharacterPanel = (function () {
       },
       onError: (err) => {
         Utils.toast('匹配失败: ' + err.message, 'error');
+      },
+    });
+  }
+
+  /**
+   * 一键提取匹配：串行执行 LLM 提取角色 → LLM 匹配音色
+   * 第一步完成后自动启动第二步，任一步失败则中止流程。
+   */
+  function extractAndMatch() {
+    if (!currentNovel) return;
+    // 第一步：LLM 提取角色
+    ProgressModal.run({
+      title: '一键提取匹配 · 提取角色中',
+      streamFn: (onEvent, signal) => API.streamExtractCharacters(currentNovel.id, onEvent, signal),
+      onComplete: (data) => {
+        currentNovel = data.novel;
+        Player.loadNovel(currentNovel);
+        render();
+        NovelManager.refreshCurrent();
+        const unbound = (currentNovel.segments || []).filter((s) => s.type === 'dialog' && !s.characterId).length;
+        // 即使有未匹配段也继续匹配音色（已提取的角色仍需匹配）
+        // 第二步：LLM 匹配音色
+        ProgressModal.run({
+          title: '一键提取匹配 · 匹配音色中',
+          streamFn: (onEvent, signal) => API.streamAutoMatchVoices(currentNovel.id, onEvent, signal),
+          onComplete: (data2) => {
+            currentNovel = { ...currentNovel, characters: data2.characters };
+            Player.loadNovel(currentNovel);
+            render();
+            const tip = unbound > 0
+              ? `一键提取匹配完成，共 ${currentNovel.characters.length} 个角色；${unbound} 个对话段未匹配到角色`
+              : `一键提取匹配完成，共 ${currentNovel.characters.length} 个角色`;
+            Utils.toast(tip, unbound > 0 ? 'info' : 'success');
+          },
+          onError: (err) => {
+            Utils.toast('匹配失败: ' + err.message, 'error');
+          },
+        });
+      },
+      onError: (err) => {
+        Utils.toast('提取失败: ' + err.message, 'error');
       },
     });
   }

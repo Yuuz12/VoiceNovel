@@ -63,7 +63,7 @@ function defaultSettings() {
       autoSegmentOnUpload: true,
       llmChunkSize: 1000, // LLM 智能分段每块字数（长文分块，避免单次请求超时）
       concurrency: 3, // LLM 智能分段并行处理块数（按 LLM 接口速率限制填写）
-      characterConcurrency: 3, // LLM 提取角色 / 智能匹配音色 的并行数（按 LLM 接口速率限制填写）
+      characterConcurrency: 3, // LLM 提取角色 / LLM 匹配音色 的并行数（按 LLM 接口速率限制填写）
       enhanceExpression: false, // 增强语音表现力：LLM 分段时在合适句子前加 [心理活动/表情/动作] 标签
     },
     playback: {
