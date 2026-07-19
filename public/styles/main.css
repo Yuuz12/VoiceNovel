@@ -73,6 +73,10 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
   border-color: var(--primary);
 }
+/* range 滑块不需要内边距，否则滑块两端会被 padding 区域挡住，拖不到 0% / 100% */
+input[type="range"] {
+  padding: 0;
+}
 textarea {
   resize: vertical;
   font-family: var(--font-sans);
