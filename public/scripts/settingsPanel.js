@@ -175,6 +175,7 @@ window.SettingsPanel = (function () {
     Utils.$('#set-llm-concurrency').value = String((s.parsing && s.parsing.concurrency) || 3);
     Utils.$('#set-character-concurrency').value = String((s.parsing && s.parsing.characterConcurrency) || 3);
     Utils.$('#set-auto-seg').checked = !!(s.parsing && s.parsing.autoSegmentOnUpload);
+    Utils.$('#set-enhance-expression').checked = !!(s.parsing && s.parsing.enhanceExpression);
     Utils.$('#set-gap-ms').value = String((s.playback && s.playback.gapBetweenSegments) || 300);
   }
 
@@ -277,7 +278,12 @@ window.SettingsPanel = (function () {
     const path = sel.value;
     if (!path) { Utils.toast('请先选择要删除的样本', 'error'); return; }
     const name = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : path;
-    if (!confirm(`确定删除样本"${name}"？\n已绑定该样本的旁白/角色将自动清空绑定。`)) return;
+    if (!await Utils.confirmDialog({
+      title: '删除样本',
+      message: `确定删除样本"${name}"？\n已绑定该样本的旁白/角色将自动清空绑定。`,
+      confirmText: '删除',
+      danger: true,
+    })) return;
     try {
       await API.deleteVoiceSample(path);
       await loadCloneSamples();
@@ -420,6 +426,7 @@ window.SettingsPanel = (function () {
           return v;
         })(),
         autoSegmentOnUpload: Utils.$('#set-auto-seg').checked,
+        enhanceExpression: Utils.$('#set-enhance-expression').checked,
       },
       playback: {
         gapBetweenSegments: parseInt(Utils.$('#set-gap-ms').value, 10) || 300,
@@ -528,7 +535,12 @@ window.SettingsPanel = (function () {
   }
 
   async function clearCache() {
-    if (!confirm('确定清空所有音频缓存？下次播放将重新调用 TTS。')) return;
+    if (!await Utils.confirmDialog({
+      title: '清空音频缓存',
+      message: '确定清空所有音频缓存？下次播放将重新调用 TTS。',
+      confirmText: '清空',
+      danger: true,
+    })) return;
     try {
       const r = await API.clearCache();
       Utils.toast(`已清空 ${r.removed} 个缓存文件`, 'success');

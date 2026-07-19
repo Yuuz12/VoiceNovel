@@ -41,6 +41,59 @@ window.Utils = (function () {
     }, 2800);
   }
 
+  /**
+   * 自定义确认弹窗（替代浏览器 confirm），返回 Promise<boolean>
+   * @param {object} opts { title, message, confirmText, cancelText, danger }
+   *   - danger: true 时确认按钮用红色（用于删除等危险操作）
+   * @returns {Promise<boolean>} 用户点确认返回 true，点取消/遮罩/Esc 返回 false
+   */
+  function confirmDialog(opts) {
+    opts = opts || {};
+    return new Promise((resolve) => {
+      let resolved = false;
+      const finish = (val) => {
+        if (resolved) return;
+        resolved = true;
+        mask.remove();
+        document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+        else if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      };
+
+      const confirmBtn = el('button', {
+        class: 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary'),
+        onclick: () => finish(true),
+      }, opts.confirmText || '确认');
+      const cancelBtn = el('button', {
+        class: 'btn btn-secondary',
+        onclick: () => finish(false),
+      }, opts.cancelText || '取消');
+
+      const card = el('div', { class: 'modal-card', style: 'max-width: 420px;' }, [
+        el('div', { class: 'modal-head' }, [
+          el('h3', {}, opts.title || '确认操作'),
+          el('button', { class: 'btn btn-icon', onclick: () => finish(false) }, '×'),
+        ]),
+        el('div', { class: 'modal-body' }, [
+          el('div', { class: 'confirm-message' }, opts.message || ''),
+        ]),
+        el('div', { class: 'modal-foot' }, [cancelBtn, confirmBtn]),
+      ]);
+
+      const mask = el('div', { class: 'modal confirm-dialog' }, [card]);
+      mask.addEventListener('click', (e) => {
+        if (e.target === mask) finish(false);
+      });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(mask);
+      // 确认按钮聚焦（方便回车确认）
+      setTimeout(() => confirmBtn.focus(), 0);
+    });
+  }
+
   function debounce(fn, wait) {
     let t = null;
     return function (...args) {
@@ -105,6 +158,7 @@ window.Utils = (function () {
     formatBytes,
     formatTime,
     toast,
+    confirmDialog,
     debounce,
     $,
     $$,

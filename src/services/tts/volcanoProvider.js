@@ -3,6 +3,7 @@
 const { randomUUID } = require('crypto');
 const logger = require('../../utils/logger');
 const settingsService = require('../settingsService');
+const audioCache = require('../audioCacheService');
 const { TTSError } = require('./ttsError');
 
 // TTS 接口地址从 settings.tts.providers.volcano.baseUrl 读取（前端设置页可配置），默认火山方舟 Agent Plan 标准地址
@@ -48,13 +49,29 @@ async function* synthesizeStream(text, speaker, opts = {}) {
     audioParams.volume_ratio = opts.volume; // -50 ~ 100
   }
 
+  // 火山 seed-tts-2.0 不识别 [描述] 方括号标签（会当普通文本朗读），
+  // 需要把方括号内容从 text 提取出来，作为自然语言情感指令传到 additions.context_texts
+  // （仅 TTS 2.0 支持，参考单向流式接口文档 req_params.additions.context_texts）
+  // 复用 audioCache 的共享清理函数，保证缓存键与实际合成文本一致
+  const contexts = audioCache.extractExpressionContexts(text);
+  const cleanText = audioCache.stripExpressionTags(text);
+  let additions = null;
+  if (contexts.length > 0) {
+    additions = JSON.stringify({ context_texts: contexts });
+  }
+
   const payload = {
     req_params: {
-      text,
+      text: cleanText,
       speaker,
       audio_params: audioParams,
     },
   };
+  // 仅当有情感指令时传 additions（避免无标签时改变原有请求结构）
+  if (additions) {
+    payload.req_params.additions = additions;
+    logger.info(`[volcano] 提取情感指令: ${additions}`);
+  }
 
   logger.info(`[volcano] TTS request: speaker=${speaker}, textLen=${text.length}, connectId=${connectId}`);
 

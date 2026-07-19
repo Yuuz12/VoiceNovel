@@ -230,6 +230,11 @@
             <input type="checkbox" id="set-auto-seg" />
             <label for="set-auto-seg">上传小说时自动分段</label>
           </div>
+          <div class="form-row checkbox-row">
+            <input type="checkbox" id="set-enhance-expression" />
+            <label for="set-enhance-expression">增强语音表现力（LLM 分段时自动在合适句子前加 [心理活动/表情/动作] 标签）</label>
+            <span class="form-hint">仅部分推荐音色和复刻音色支持；开启后段落文本中方括号内容显示为红色淡色</span>
+          </div>
         </fieldset>
 
         <fieldset class="settings-section">
@@ -277,7 +282,7 @@
           <textarea id="new-novel-text" rows="14" placeholder="粘贴小说文本，或拖入 .txt 文件..."></textarea>
         </div>
         <div class="form-row checkbox-row">
-          <input type="checkbox" id="new-novel-autoseg" checked />
+          <input type="checkbox" id="new-novel-autoseg" />
           <label for="new-novel-autoseg">上传时自动分段</label>
         </div>
         <div class="form-row">

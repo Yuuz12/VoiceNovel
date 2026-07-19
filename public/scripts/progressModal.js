@@ -255,9 +255,14 @@ window.ProgressModal = (function () {
     state = 'idle';
   }
 
-  function requestCancel() {
+  async function requestCancel() {
     if (state !== 'running') return;
-    if (!confirm('取消任务？已处理的进度将丢失。')) return;
+    if (!await Utils.confirmDialog({
+      title: '取消任务',
+      message: '取消任务？已处理的进度将丢失。',
+      confirmText: '取消任务',
+      danger: true,
+    })) return;
     if (currentController) currentController.abort();
   }
 

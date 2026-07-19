@@ -10,14 +10,46 @@ const CACHE_DIR = path.join(DATA_DIR, 'audio_cache');
 ensureDir(CACHE_DIR);
 
 /**
- * 计算缓存键
+ * 从文本中移除表现力标签 [描述]，返回清理后的纯文本
+ * 用于缓存键计算和 TTS 文本预处理，保证含/不含标签的同一文本走同一缓存
+ * @param {string} text
+ * @returns {string}
+ */
+function stripExpressionTags(text) {
+  if (!text || typeof text !== 'string') return text || '';
+  if (!/\[[^\]\n]*\]/.test(text)) return text;
+  let cleaned = text.replace(/\[[^\]\n]*\]/g, '').replace(/\s+/g, ' ').trim();
+  // 极端情况：清理后为空（整段都是标签），回退到去掉方括号但保留内容
+  if (!cleaned) {
+    cleaned = text.replace(/[\[\]]/g, '').trim();
+  }
+  return cleaned;
+}
+
+/**
+ * 提取表现力标签内容作为情感指令数组（供火山 additions.context_texts 使用）
+ * @param {string} text
+ * @returns {string[]} 情感指令数组（可能为空）
+ */
+function extractExpressionContexts(text) {
+  if (!text || typeof text !== 'string') return [];
+  const matches = text.match(/\[([^\]\n]*)\]/g);
+  if (!matches || matches.length === 0) return [];
+  return matches
+    .map((m) => m.replace(/^\[|\]$/g, '').trim())
+    .filter((c) => c);
+}
+
+/**
+ * 计算缓存键（自动移除表现力标签，保证含/不含标签的同文本走同一缓存）
  * @param {string} speaker
  * @param {string} text
  * @param {object} [params] { speed, volume }
  * @returns {string} 32 字符 hex
  */
 function computeKey(speaker, text, params = {}) {
-  const raw = `${speaker}|${text}|${params.speed || 0}|${params.volume || 0}`;
+  const normalizedText = stripExpressionTags(text);
+  const raw = `${speaker}|${normalizedText}|${params.speed || 0}|${params.volume || 0}`;
   return crypto.createHash('sha256').update(raw, 'utf-8').digest('hex').slice(0, 32);
 }
 
@@ -124,6 +156,8 @@ function clear() {
 
 module.exports = {
   computeKey,
+  stripExpressionTags,
+  extractExpressionContexts,
   has,
   read,
   readStream,

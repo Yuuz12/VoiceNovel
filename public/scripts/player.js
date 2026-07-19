@@ -2,6 +2,11 @@
 window.Player = (function () {
   const audio = new Audio();
   audio.preload = 'auto';
+  // 从 localStorage 恢复全局音量（默认 1.0）
+  try {
+    const savedVol = parseFloat(localStorage.getItem('player-volume'));
+    if (isFinite(savedVol)) audio.volume = Math.max(0, Math.min(1, savedVol));
+  } catch (_) {}
 
   let ws = null;
   let wsReady = false;
@@ -288,6 +293,35 @@ window.Player = (function () {
     emit('state', getState());
   }
 
+  /**
+   * 设置全局音量（0-1）
+   * 持久化到 localStorage，新音频加载时自动恢复
+   */
+  function setVolume(v) {
+    const vol = Math.max(0, Math.min(1, v));
+    audio.volume = vol;
+    try { localStorage.setItem('player-volume', String(vol)); } catch (_) {}
+    emit('state', getState());
+  }
+
+  function getVolume() {
+    return audio.volume;
+  }
+
+  /**
+   * 按比例（0-1）跳转到当前音频的指定位置
+   */
+  function seekRatio(ratio) {
+    if (!audio.duration || !isFinite(audio.duration)) return;
+    const r = Math.max(0, Math.min(1, ratio));
+    audio.currentTime = r * audio.duration;
+    emit('progress', {
+      currentTime: audio.currentTime,
+      duration: audio.duration,
+      ratio: audio.currentTime / audio.duration,
+    });
+  }
+
   function setGap(ms) {
     gapMs = Math.max(0, Math.min(5000, ms));
   }
@@ -350,6 +384,9 @@ window.Player = (function () {
     prev,
     seekTo,
     setPlaybackRate,
+    setVolume,
+    getVolume,
+    seekRatio,
     setGap,
     getState,
     on,

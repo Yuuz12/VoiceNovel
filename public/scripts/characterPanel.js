@@ -166,7 +166,12 @@ window.CharacterPanel = (function () {
 
   async function deleteCharacter(c) {
     if (!currentNovel) return;
-    if (!confirm(`确定删除角色"${c.name}"？\n绑定到该角色的段落将变为未绑定，可在段落列表手动重绑。`)) return;
+    if (!await Utils.confirmDialog({
+      title: '删除角色',
+      message: `确定删除角色"${c.name}"？\n绑定到该角色的段落将变为未绑定，可在段落列表手动重绑。`,
+      confirmText: '删除',
+      danger: true,
+    })) return;
     try {
       await API.deleteCharacter(currentNovel.id, c.id);
       currentNovel.characters = (currentNovel.characters || []).filter((x) => x.id !== c.id);
@@ -355,12 +360,17 @@ window.CharacterPanel = (function () {
 
       // 删除当前选中的样本（全局删除，会清空所有角色/旁白对该样本的绑定）
       const deleteBtn = Utils.el('button', { class: 'btn btn-danger btn-sm' }, '删除样本');
-      deleteBtn.addEventListener('click', () => {
+      deleteBtn.addEventListener('click', async () => {
         const path = sel.value;
         if (!path) { Utils.toast('请先选择要删除的样本', 'error'); return; }
         const opt = sel.options[sel.selectedIndex];
         const name = opt ? opt.textContent : path;
-        if (!confirm(`确定删除样本"${name}"？\n已绑定该样本的角色/旁白将自动清空绑定。`)) return;
+        if (!await Utils.confirmDialog({
+          title: '删除样本',
+          message: `确定删除样本"${name}"？\n已绑定该样本的角色/旁白将自动清空绑定。`,
+          confirmText: '删除',
+          danger: true,
+        })) return;
         deleteCloneSample(path);
       });
 

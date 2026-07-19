@@ -10,6 +10,7 @@ window.NovelManager = (function () {
     page: 1,            // 当前页码（1-based）
     total: 0,           // 总段数
     scrollLock: false,  // 切页时锁定滚动监听，避免循环触发
+    requireLeaveEdge: false, // 切页后要求用户先离开边缘区域才能再次触发切页
   };
   let sortedSegments = [];      // 排序缓存（避免每次 renderDetail 都 sort）
   let segIndexMap = new Map();  // segId -> 在 sortedSegments 中的索引（O(1) 查找）
@@ -24,6 +25,8 @@ window.NovelManager = (function () {
     pause: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>',
     next: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>',
     stop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>',
+    volume: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4-0.91 7-4.49 7-8.77s-3-7.86-7-8.77z"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>',
   };
 
   // === 分页工具函数 ===
@@ -85,10 +88,26 @@ window.NovelManager = (function () {
     segViewScrollHandler = Utils.debounce(() => {
       if (pagination.scrollLock) return;
       if (sortedSegments.length === 0) return;
-      if (sv.scrollTop + sv.clientHeight >= sv.scrollHeight - THRESHOLD
-          && pagination.page < totalPages()) {
+      const atBottom = sv.scrollTop + sv.clientHeight >= sv.scrollHeight - THRESHOLD;
+      const atTop = sv.scrollTop <= THRESHOLD;
+      // 内容不满一屏时（如最后一页只有几条），atTop 和 atBottom 同时成立，
+      // 此时直接解除 requireLeaveEdge，否则会永久卡住
+      const contentShort = sv.scrollHeight - sv.clientHeight <= THRESHOLD;
+      // 切页后要求用户先把滚动位置移出边缘区域（atBottom 和 atTop 都不成立），
+      // 才能再次触发切页。避免切到下一页后 scrollTop=0，用户继续滚动时
+      // 触发切回上一页，导致来回切换。
+      if (pagination.requireLeaveEdge && !contentShort) {
+        if (!atBottom && !atTop) {
+          pagination.requireLeaveEdge = false; // 已离开边缘，解除锁定
+        } else {
+          return; // 仍在边缘，忽略本次触发
+        }
+      }
+      if (atBottom && pagination.page < totalPages()) {
+        pagination.requireLeaveEdge = true;
         gotoPage(pagination.page + 1, { direction: 'next' });
-      } else if (sv.scrollTop <= THRESHOLD && pagination.page > 1) {
+      } else if (atTop && pagination.page > 1) {
+        pagination.requireLeaveEdge = true;
         gotoPage(pagination.page - 1, { direction: 'prev' });
       }
     }, 120);
@@ -185,6 +204,54 @@ window.NovelManager = (function () {
     }
   }
 
+  /**
+   * inline 编辑小说标题：点击 h2 变 input，失焦/回车提交，Esc 取消
+   */
+  function editNovelTitle(novel, titleEl) {
+    const input = Utils.el('input', {
+      type: 'text',
+      class: 'novel-title-input',
+      value: novel.title,
+    });
+    input.style.width = '100%';
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+    let committed = false;
+    const commit = async () => {
+      if (committed) return;
+      committed = true;
+      const v = input.value.trim();
+      if (v === novel.title || !v) {
+        input.replaceWith(titleEl);
+        return;
+      }
+      try {
+        await API.updateNovel(novel.id, { title: v });
+        novel.title = v;
+        currentNovel = currentNovel || {};
+        currentNovel.title = v;
+        titleEl.textContent = v;
+        input.replaceWith(titleEl);
+        await refreshList();
+        Utils.toast('已修改标题', 'success');
+      } catch (err) {
+        input.replaceWith(titleEl);
+        Utils.toast('修改标题失败: ' + err.message, 'error');
+      }
+    };
+    const cancel = () => {
+      if (committed) return;
+      committed = true;
+      input.replaceWith(titleEl);
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+  }
+
   function renderList(novels) {
     const ul = Utils.$('#novel-list');
     ul.innerHTML = '';
@@ -201,6 +268,21 @@ window.NovelManager = (function () {
         Utils.el('div', { class: 'novel-title' }, n.title),
         Utils.el('div', { class: 'novel-meta' },
           `${n.segmentCount || 0} 段 · ${n.characterCount || 0} 角色 · ${n.rawTextLength || 0} 字`),
+        // 置于顶部按钮（不触发 openNovel）
+        Utils.el('button', {
+          class: 'btn btn-icon novel-pin-btn',
+          title: '置于顶部',
+          onclick: async (e) => {
+            e.stopPropagation();
+            try {
+              await API.pinToTop(n.id);
+              await refreshList();
+              Utils.toast('已置于顶部', 'success');
+            } catch (err) {
+              Utils.toast('操作失败: ' + err.message, 'error');
+            }
+          },
+        }, '↑'),
       ]);
       ul.appendChild(li);
     }
@@ -215,6 +297,7 @@ window.NovelManager = (function () {
       // 重置分页状态：打开新小说时回到第 1 页
       rebuildSegIndex();
       pagination.page = 1;
+      pagination.requireLeaveEdge = false;
       lastCurrentSegId = null;
       renderedSegIds.clear();
       renderDetail(novel);
@@ -253,12 +336,15 @@ window.NovelManager = (function () {
 
     const detail = Utils.el('div', { class: 'novel-detail' });
 
-    // 头部
+    // 头部（标题可点击编辑）
+    const titleEl = Utils.el('h2', { class: 'novel-title-editable', title: '点击编辑标题' }, novel.title);
+    titleEl.addEventListener('click', () => editNovelTitle(novel, titleEl));
     const head = Utils.el('div', { class: 'novel-detail-head' }, [
-      Utils.el('h2', {}, novel.title),
+      titleEl,
       Utils.el('div', { class: 'novel-actions' }, [
         Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => resegment('rule') }, '规则分段'),
         Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => resegment('llm') }, 'LLM 智能分段'),
+        Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => clearExpressionTags(novel) }, '清除表现力标签'),
         Utils.el('button', { class: 'btn btn-danger btn-sm', onclick: () => deleteNovel(novel.id) }, '删除'),
       ]),
     ]);
@@ -296,6 +382,19 @@ window.NovelManager = (function () {
 
     // 绑定播放器事件
     bindPlayerEvents();
+  }
+
+  /**
+   * 把段落文本渲染为 HTML：方括号 [描述] 标签包裹 <span class="seg-expr-tag"> 显示为红色半透明
+   * 先转义防止 XSS，再用正则把 [非] 替换为 span
+   * @param {string} text
+   * @returns {string} HTML 字符串
+   */
+  function renderSegTextHtml(text) {
+    if (!text) return '';
+    const escaped = Utils.escapeHtml(text);
+    // 匹配 [...] 中的内容（不含换行，避免误匹配跨段）
+    return escaped.replace(/\[([^\]\n]*)\]/g, '<span class="seg-expr-tag">[$1]</span>');
   }
 
   /**
@@ -349,9 +448,14 @@ window.NovelManager = (function () {
     const regenBtn = Utils.el('button', {
       class: 'btn btn-icon seg-regen',
       title: '重新生成此段音频',
-      onclick: (e) => {
+      onclick: async (e) => {
         e.stopPropagation();
-        if (!confirm('重新生成此段音频？将删除缓存并重新合成。')) return;
+        const ok = await Utils.confirmDialog({
+          title: '重新生成音频',
+          message: '重新生成此段音频？将删除缓存并重新合成。',
+          confirmText: '重新生成',
+        });
+        if (!ok) return;
         Player.regenerate(seg.id);
         Utils.toast('正在重新生成音频...', 'info');
       },
@@ -364,15 +468,23 @@ window.NovelManager = (function () {
     const delBtn = Utils.el('button', {
       class: 'btn btn-danger btn-sm seg-del-btn',
       title: '删除此段',
-      onclick: (e) => {
+      onclick: async (e) => {
         e.stopPropagation();
-        if (!confirm('确定删除此段？删除后顺序自动重排，无法撤销。')) return;
+        const ok = await Utils.confirmDialog({
+          title: '删除段落',
+          message: '确定删除此段？删除后顺序自动重排，无法撤销。',
+          confirmText: '删除',
+          danger: true,
+        });
+        if (!ok) return;
         deleteSegment(seg);
       },
     }, '删除');
 
     // 段落文本（点击进入编辑模式）
-    const textDiv = Utils.el('div', { class: 'seg-text' }, seg.text);
+    // 方括号 [心理活动/表情/动作] 标签渲染为红色半透明，增强表现力标签可视
+    const textDiv = Utils.el('div', { class: 'seg-text' });
+    textDiv.innerHTML = renderSegTextHtml(seg.text);
     textDiv.addEventListener('click', (e) => {
       if (e.target !== textDiv) return;
       e.stopPropagation();
@@ -491,7 +603,7 @@ window.NovelManager = (function () {
         if (idx != null && currentNovel.segments[idx]) {
           currentNovel.segments[idx].text = v;
         }
-        textDiv.textContent = v;
+        textDiv.innerHTML = renderSegTextHtml(v);
         ta.replaceWith(textDiv);
         Utils.toast('已修改段落文本', 'success');
       } catch (err) {
@@ -544,6 +656,7 @@ window.NovelManager = (function () {
    */
   function bindSegDragDrop(segView) {
     let dragSrcId = null;
+    let dropPosition = null; // 'before' | 'after'，记录鼠标在 target block 的上/下半部分
     segView.addEventListener('dragstart', (e) => {
       const block = e.target.closest('.seg-block');
       if (!block) return;
@@ -555,20 +668,33 @@ window.NovelManager = (function () {
     segView.addEventListener('dragend', (e) => {
       const block = e.target.closest('.seg-block');
       if (block) block.classList.remove('dragging');
-      segView.querySelectorAll('.seg-block.drag-over').forEach((b) => b.classList.remove('drag-over'));
+      segView.querySelectorAll('.seg-block.drag-over, .seg-block.drag-over-after').forEach((b) => {
+        b.classList.remove('drag-over', 'drag-over-after');
+      });
       dragSrcId = null;
+      dropPosition = null;
     });
     segView.addEventListener('dragover', (e) => {
       const block = e.target.closest('.seg-block');
       if (!block || !dragSrcId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      segView.querySelectorAll('.seg-block.drag-over').forEach((b) => b.classList.remove('drag-over'));
-      if (block.dataset.segId !== dragSrcId) block.classList.add('drag-over');
+      // 根据鼠标 Y 坐标在 block 的上/下半部分判断插入位置
+      const rect = block.getBoundingClientRect();
+      const isAfter = (e.clientY - rect.top) > rect.height / 2;
+      dropPosition = isAfter ? 'after' : 'before';
+      // 清除其他 block 的高亮
+      segView.querySelectorAll('.seg-block.drag-over, .seg-block.drag-over-after').forEach((b) => {
+        if (b !== block) b.classList.remove('drag-over', 'drag-over-after');
+      });
+      if (block.dataset.segId !== dragSrcId) {
+        block.classList.toggle('drag-over', !isAfter);       // before: 上边框高亮
+        block.classList.toggle('drag-over-after', isAfter);  // after: 下边框高亮
+      }
     });
     segView.addEventListener('dragleave', (e) => {
       const block = e.target.closest('.seg-block');
-      if (block) block.classList.remove('drag-over');
+      if (block) block.classList.remove('drag-over', 'drag-over-after');
     });
     segView.addEventListener('drop', async (e) => {
       e.preventDefault();
@@ -578,31 +704,44 @@ window.NovelManager = (function () {
       // 而 await 之后的代码还需要用它，所以先存到局部变量
       const srcId = dragSrcId;
       const targetId = block.dataset.segId;
-      segView.querySelectorAll('.seg-block.drag-over').forEach((b) => b.classList.remove('drag-over'));
+      const position = dropPosition || 'before';
+      segView.querySelectorAll('.seg-block.drag-over, .seg-block.drag-over-after').forEach((b) => {
+        b.classList.remove('drag-over', 'drag-over-after');
+      });
       if (targetId === srcId) return;
+      // 计算实际传给后端的 targetId：
+      //   before -> 直接用 targetId（插入到 target 之前）
+      //   after  -> 用 target 的下一个 segment.id（插入到它之前 = 插入到 target 之后）；
+      //             若 target 是最后一个，传 null（移到末尾）
+      let apiTargetId = targetId;
+      if (position === 'after') {
+        const targetIdx = segIndexMap.get(targetId);
+        if (targetIdx != null && targetIdx + 1 < sortedSegments.length) {
+          apiTargetId = sortedSegments[targetIdx + 1].id;
+        } else {
+          apiTargetId = null; // target 是最后一个，移到末尾
+        }
+      }
       try {
-        await API.moveSegment(currentNovel.id, srcId, targetId);
+        await API.moveSegment(currentNovel.id, srcId, apiTargetId);
         const segs = currentNovel.segments || [];
         const fromIdx = segs.findIndex((s) => s.id === srcId);
-        const toIdx = segs.findIndex((s) => s.id === targetId);
-        if (fromIdx < 0 || toIdx < 0) return;
+        if (fromIdx < 0) return;
         const [moved] = segs.splice(fromIdx, 1);
+        let toIdx;
+        if (apiTargetId === null || apiTargetId === undefined) {
+          toIdx = segs.length;
+        } else {
+          toIdx = segs.findIndex((s) => s.id === apiTargetId);
+          if (toIdx < 0) { segs.splice(fromIdx, 0, moved); return; }
+        }
         segs.splice(toIdx, 0, moved);
         segs.forEach((s, i) => { s.order = i; });
         rebuildSegIndex();
         Player.loadNovel(currentNovel);
 
-        // 局部 DOM 节点交换（src 和 target 必定在同页，因为只能拖可见 block）
-        const srcBlock = Utils.$(`#segment-view .seg-block[data-seg-id="${srcId}"]`);
-        const targetBlock = Utils.$(`#segment-view .seg-block[data-seg-id="${targetId}"]`);
-        if (srcBlock && targetBlock && srcBlock !== targetBlock) {
-          // 简单稳妥的方式：重渲染当前页（100 block，比全量 renderDetail 快得多）
-          // 直接 DOM 交换在跨位置时逻辑复杂，重渲染更安全
-          renderSegView();
-        } else {
-          // 跨页拖拽（理论上不会发生），回退到重渲染当前页
-          renderSegView();
-        }
+        // 重渲染当前页（src 和 target 在同页时成本 ≤ 100 block）
+        renderSegView();
         updateSegCountLabel();
         Utils.toast('已调整段落顺序', 'success');
       } catch (err) {
@@ -674,15 +813,67 @@ window.NovelManager = (function () {
 
     const controls = Utils.el('div', { class: 'player-controls' }, [prevBtn, playBtn, nextBtn, stopBtn]);
 
+    // 可拖动进度条：mousedown 开始拖动，mousemove 实时预览，mouseup 提交 seek
+    const progressFill = Utils.el('div', { class: 'player-progress-fill', id: 'player-progress-fill' });
+    const progressBar = Utils.el('div', { class: 'player-progress-bar', id: 'player-progress-bar' }, [progressFill]);
+    let dragging = false;
+    let dragRatio = 0;
+    const ratioFromEvent = (e) => {
+      const rect = progressBar.getBoundingClientRect();
+      const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+      return Math.max(0, Math.min(1, x / rect.width));
+    };
+    progressBar.addEventListener('mousedown', (e) => {
+      // 仅在有有效时长时允许拖动
+      const st = Player.getState();
+      if (!st.audioDuration || !isFinite(st.audioDuration)) return;
+      dragging = true;
+      dragRatio = ratioFromEvent(e);
+      progressFill.style.width = (dragRatio * 100).toFixed(1) + '%';
+      progressBar.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      dragRatio = ratioFromEvent(e);
+      progressFill.style.width = (dragRatio * 100).toFixed(1) + '%';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      progressBar.classList.remove('dragging');
+      Player.seekRatio(dragRatio);
+    });
+    // 触屏支持
+    progressBar.addEventListener('touchstart', (e) => {
+      const st = Player.getState();
+      if (!st.audioDuration || !isFinite(st.audioDuration)) return;
+      dragging = true;
+      dragRatio = ratioFromEvent(e);
+      progressFill.style.width = (dragRatio * 100).toFixed(1) + '%';
+      progressBar.classList.add('dragging');
+      e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      dragRatio = ratioFromEvent(e);
+      progressFill.style.width = (dragRatio * 100).toFixed(1) + '%';
+      e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', () => {
+      if (!dragging) return;
+      dragging = false;
+      progressBar.classList.remove('dragging');
+      Player.seekRatio(dragRatio);
+    });
+
     const info = Utils.el('div', { class: 'player-info' }, [
       Utils.el('div', { class: 'player-segment-info', id: 'player-segment-info' }, [
         Utils.el('span', {}, '准备就绪'),
       ]),
       Utils.el('div', { class: 'player-progress' }, [
         Utils.el('span', { id: 'player-time-cur' }, '00:00'),
-        Utils.el('div', { class: 'player-progress-bar' }, [
-          Utils.el('div', { class: 'player-progress-fill', id: 'player-progress-fill' }),
-        ]),
+        progressBar,
         Utils.el('span', { id: 'player-time-dur' }, '00:00'),
       ]),
     ]);
@@ -701,9 +892,53 @@ window.NovelManager = (function () {
       })(),
     ]);
 
+    // 全局音量控制：滑块 + 静音按钮，值持久化到 localStorage（player.js 内部处理）
+    const updateMuteIcon = (btn, vol) => {
+      btn.innerHTML = vol === 0 ? ICONS.mute : ICONS.volume;
+    };
+    const volume = Utils.el('div', { class: 'player-volume' }, [
+      Utils.el('span', {}, '音量'),
+      (() => {
+        const slider = Utils.el('input', {
+          type: 'range', id: 'player-volume-slider',
+          min: '0', max: '100', step: '1',
+        });
+        slider.value = String(Math.round(Player.getVolume() * 100));
+        slider.addEventListener('input', () => {
+          const vol = parseFloat(slider.value) / 100;
+          Player.setVolume(vol);
+          updateMuteIcon(muteBtn, vol);
+        });
+        return slider;
+      })(),
+    ]);
+    let lastMuted = false;
+    const muteBtn = Utils.el('button', {
+      class: 'btn btn-icon player-mute-btn',
+      id: 'player-mute-btn',
+      title: '静音/恢复',
+      onclick: () => {
+        const cur = Player.getVolume();
+        if (cur > 0) {
+          lastMuted = cur;
+          Player.setVolume(0);
+          Utils.$('#player-volume-slider').value = '0';
+          updateMuteIcon(muteBtn, 0);
+        } else {
+          const restore = lastMuted || 1;
+          Player.setVolume(restore);
+          Utils.$('#player-volume-slider').value = String(Math.round(restore * 100));
+          updateMuteIcon(muteBtn, restore);
+        }
+      },
+    });
+    updateMuteIcon(muteBtn, Player.getVolume());
+
     bar.appendChild(controls);
     bar.appendChild(info);
     bar.appendChild(speed);
+    bar.appendChild(volume);
+    bar.appendChild(muteBtn);
     return bar;
   }
 
@@ -803,7 +1038,17 @@ window.NovelManager = (function () {
     if (fill) fill.classList.remove('loading');
   }
 
-  function openNewNovelModal() {
+  async function openNewNovelModal() {
+    // 从设置读取 autoSegmentOnUpload，同步 checkbox 状态
+    // 修复 bug：原 HTML 写死 checked，导致用户在设置页取消勾选后仍默认打开
+    try {
+      const s = await API.getSettings();
+      const auto = !!(s && s.parsing && s.parsing.autoSegmentOnUpload);
+      Utils.$('#new-novel-autoseg').checked = auto;
+    } catch (err) {
+      // 读取失败时保留 HTML 默认 checked，不阻塞用户创建
+      console.error('load settings for autoseg failed', err);
+    }
     Utils.$('#modal-new-novel').classList.remove('hidden');
     Utils.$('#new-novel-title').focus();
   }
@@ -850,7 +1095,12 @@ window.NovelManager = (function () {
       return;
     }
 
-    if (!confirm(`确定要重新${btnLabel}吗？这将覆盖当前段落与角色配置（已配置的音色会保留）。`)) return;
+    if (!await Utils.confirmDialog({
+      title: `重新${btnLabel}`,
+      message: `确定要重新${btnLabel}吗？这将覆盖当前段落与角色配置（已配置的音色会保留）。`,
+      confirmText: '确定',
+      danger: true,
+    })) return;
     // 规则模式：保持原样（同步快速完成，无需进度框）
     Utils.toast(`正在执行${btnLabel}...`);
     try {
@@ -888,16 +1138,21 @@ window.NovelManager = (function () {
     const hasChars = (currentNovel.characters || []).length > 0;
     // 角色为空时提示先提取/新建；执意继续则 forceEmpty（所有段落 characterId=null）
     if (!hasChars) {
-      const choice = confirm(
-        '当前没有角色，LLM 分段将无法绑定角色（所有对话段将标记为未绑定）。\n\n' +
-        '建议先点"LLM 提取角色"或"添加角色"建立角色列表。\n\n' +
-        '点"确定"仍要继续分段（全部不绑定）；点"取消"返回。'
-      );
+      const choice = await Utils.confirmDialog({
+        title: '角色列表为空',
+        message: '当前没有角色，LLM 分段将无法绑定角色（所有对话段将标记为未绑定）。\n\n建议先点"LLM 提取角色"或"添加角色"建立角色列表。\n\n点"继续"仍要继续分段（全部不绑定）；点"取消"返回。',
+        confirmText: '继续',
+      });
       if (!choice) return;
     }
     // start 模式：若已有段落，确认覆盖
     if (mode === 'start' && (currentNovel.segments || []).length > 0) {
-      if (!confirm('确定要重新 LLM 智能分段吗？这将清空当前段落并重新分段（角色列表与音色配置保留）。')) return;
+      if (!await Utils.confirmDialog({
+        title: '重新 LLM 智能分段',
+        message: '确定要重新 LLM 智能分段吗？这将清空当前段落并重新分段（角色列表与音色配置保留）。',
+        confirmText: '确定',
+        danger: true,
+      })) return;
     }
 
     // 需求4：点击 LLM 智能分段始终清空段落列表并重新开始（start/fresh 都发 fresh）
@@ -1099,8 +1354,13 @@ window.NovelManager = (function () {
       const contBtn = Utils.el('button', { class: 'btn btn-primary btn-sm' }, '继续分段');
       contBtn.addEventListener('click', () => startLLMSegmentation('continue'));
       const freshBtn = Utils.el('button', { class: 'btn btn-secondary btn-sm' }, '重新开始');
-      freshBtn.addEventListener('click', () => {
-        if (!confirm('重新开始将清空已分段的段落，确定吗？')) return;
+      freshBtn.addEventListener('click', async () => {
+        if (!await Utils.confirmDialog({
+          title: '重新开始分段',
+          message: '重新开始将清空已分段的段落，确定吗？',
+          confirmText: '重新开始',
+          danger: true,
+        })) return;
         startLLMSegmentation('fresh');
       });
       line.appendChild(contBtn);
@@ -1239,7 +1499,12 @@ window.NovelManager = (function () {
   }
 
   async function deleteNovel(id) {
-    if (!confirm('确定删除这本小说？此操作不可撤销。')) return;
+    if (!await Utils.confirmDialog({
+      title: '删除小说',
+      message: '确定删除这本小说？此操作不可撤销。',
+      confirmText: '删除',
+      danger: true,
+    })) return;
     try {
       await API.deleteNovel(id);
       Utils.toast('已删除', 'success');
@@ -1253,6 +1518,33 @@ window.NovelManager = (function () {
       await refreshList();
     } catch (err) {
       Utils.toast('删除失败: ' + err.message, 'error');
+    }
+  }
+
+  /**
+   * 清除所有段落文本中的表现力标签 [描述]
+   * 调后端批量接口，再更新本地数据 + 重渲染当前页
+   */
+  async function clearExpressionTags(novel) {
+    if (!novel) return;
+    if (!await Utils.confirmDialog({
+      title: '清除表现力标签',
+      message: '将移除所有段落文本中的方括号 [描述] 标签，原文保留。确定继续？',
+      confirmText: '清除',
+      danger: true,
+    })) return;
+    try {
+      const r = await API.clearExpressionTags(novel.id);
+      // 用后端返回的最新 novel 替换本地
+      currentNovel = r.novel;
+      Player.loadNovel(currentNovel);
+      CharacterPanel.setNovel(currentNovel);
+      rebuildSegIndex();
+      renderSegView();
+      updateSegCountLabel();
+      Utils.toast(`已清除 ${r.cleared} 段的表现力标签`, 'success');
+    } catch (err) {
+      Utils.toast('清除失败: ' + err.message, 'error');
     }
   }
 

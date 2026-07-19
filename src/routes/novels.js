@@ -38,6 +38,13 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/novels/:id/pin-to-top - 置于顶部（单次操作，不影响 updatedAt）
+router.post('/:id/pin-to-top', (req, res) => {
+  const ok = novelService.pinToTop(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'novel not found' });
+  res.json({ ok: true });
+});
+
 // POST /api/novels/:id/segment - 规则分段
 router.post('/:id/segment', (req, res) => {
   const novel = novelService.segmentNovelRule(req.params.id);
@@ -57,6 +64,13 @@ router.delete('/:id/segments/:segId', (req, res) => {
   const ok = novelService.deleteSegment(req.params.id, req.params.segId);
   if (!ok) return res.status(404).json({ error: 'novel or segment not found' });
   res.json({ ok: true });
+});
+
+// POST /api/novels/:id/clear-expression-tags - 清除所有段落的表现力标签 [描述]
+router.post('/:id/clear-expression-tags', (req, res) => {
+  const result = novelService.clearExpressionTags(req.params.id);
+  if (!result) return res.status(404).json({ error: 'novel not found' });
+  res.json({ ok: true, cleared: result.cleared, novel: result.novel });
 });
 
 // POST /api/novels/:id/segments/:segId/move - 移动段落顺序

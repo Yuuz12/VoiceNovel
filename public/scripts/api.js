@@ -116,6 +116,8 @@ window.API = (function () {
     getNovel: (id) => request('GET', '/novels/' + id),
     updateNovel: (id, data) => request('PUT', '/novels/' + id, data),
     deleteNovel: (id) => request('DELETE', '/novels/' + id),
+    pinToTop: (id) => request('POST', '/novels/' + id + '/pin-to-top'),
+    clearExpressionTags: (id) => request('POST', '/novels/' + id + '/clear-expression-tags'),
     // 更新段落（如换绑角色 characterId）
     updateSegment: (novelId, segId, data) => request('PUT', '/novels/' + novelId + '/segments/' + segId, data),
     deleteSegment: (novelId, segId) => request('DELETE', '/novels/' + novelId + '/segments/' + segId),

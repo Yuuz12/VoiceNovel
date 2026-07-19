@@ -525,6 +525,14 @@ async function segmentOneChunk(chunk, chunkIndex, chunkTotal, settings, opts = {
   if (opts.signal && opts.signal.aborted) {
     throw new LLMError('已取消', 'ABORTED');
   }
+  const enhanceExpression = !!opts.enhanceExpression;
+  // 增强表现力说明：开启后让 LLM 在合适句子前加 [描述] 标签
+  const enhanceRule = enhanceExpression ? `
+5. 【增强表现力】在合适的段落（特别是对话和情绪明显的旁白）开头或句子前，用方括号 [] 添加心理活动、细腻表情、肢体动作等描述标签，增强 TTS 语音表现力。例如：
+   - D|林墨|[紧张，深呼吸]呼……冷静，冷静。不就是一个面试吗……
+   - N|[极其疲惫，有气无力]夜已经深了，城市还在呼吸。
+   - D|苏婉|[轻笑]你呀，总是这样。
+   标签内容要求：简短（2-10字）、贴合语境、描述情绪/动作/神态；不要每段都加，仅在能增强表现力时添加；不要修改原文一字，方括号要加在原文之前。` : '';
   const messages = [
     {
       role: 'system',
@@ -542,7 +550,7 @@ D|角色名|对话内容（不含引号）
 1. 完整保留原文，不修改、不省略、不添加任何字
 2. 对话段落需识别说话角色名；若文本明确给出（如"林墨说"），用该名字；若无法判断则角色名留空（D||对话）
 3. 连续旁白可合并为一段，但不要超过 200 字
-4. 段落顺序必须与原文一致
+4. 段落顺序必须与原文一致${enhanceRule}
 
 小说文本：
 ---
