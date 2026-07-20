@@ -4,19 +4,16 @@ window.NovelManager = (function () {
   let voiceCatalog = [];
   let voiceGroups = {};
 
-  // === 分页状态（翻页模式：每次只渲染一页 100 条，滚到底/顶切换下/上一页）===
+  // === 分页状态（翻页模式：每次只渲染一页 100 条，点击工具条按钮翻页）===
   const PAGE_SIZE = 100;
   const pagination = {
     page: 1,            // 当前页码（1-based）
     total: 0,           // 总段数
-    scrollLock: false,  // 切页时锁定滚动监听，避免循环触发
-    requireLeaveEdge: false, // 切页后要求用户先离开边缘区域才能再次触发切页
   };
   let sortedSegments = [];      // 排序缓存（避免每次 renderDetail 都 sort）
   let segIndexMap = new Map();  // segId -> 在 sortedSegments 中的索引（O(1) 查找）
   let lastCurrentSegId = null;  // 上次播放的段 id（用于增量更新 .current）
   let renderedSegIds = new Set(); // 当前 DOM 中已渲染的段 id（增量分段去重）
-  let segViewScrollHandler = null; // 滚动监听器引用（便于解绑）
 
   // 播放器 SVG 图标（Material Design 风格，fill=currentColor 自动跟随按钮颜色）
   const ICONS = {
@@ -64,68 +61,38 @@ window.NovelManager = (function () {
     sv.appendChild(frag);
     bindSegDragDrop(sv);
   }
-  // 更新工具条上的"共 X 段，正在显示 A-B 段"标签
+  // 更新工具条上的"共 X 段，正在显示 A-B 段"标签 + 翻页按钮禁用态
   function updateSegCountLabel() {
     const label = Utils.$('.segment-toolbar .seg-count');
-    if (!label) return;
     const total = sortedSegments.length;
-    if (total === 0) {
-      label.textContent = '共 0 段';
-      return;
-    }
-    const start = (pagination.page - 1) * PAGE_SIZE + 1;
-    const end = Math.min(pagination.page * PAGE_SIZE, total);
-    label.textContent = `共 ${total} 段，正在显示 ${start}-${end} 段`;
-  }
-  // 绑定 segment-view 滚动监听（翻页触发）
-  function bindSegViewScroll() {
-    const sv = Utils.$('#segment-view');
-    if (!sv) return;
-    if (segViewScrollHandler) {
-      sv.removeEventListener('scroll', segViewScrollHandler);
-    }
-    const THRESHOLD = 80;
-    segViewScrollHandler = Utils.debounce(() => {
-      if (pagination.scrollLock) return;
-      if (sortedSegments.length === 0) return;
-      const atBottom = sv.scrollTop + sv.clientHeight >= sv.scrollHeight - THRESHOLD;
-      const atTop = sv.scrollTop <= THRESHOLD;
-      // 内容不满一屏时（如最后一页只有几条），atTop 和 atBottom 同时成立，
-      // 此时直接解除 requireLeaveEdge，否则会永久卡住
-      const contentShort = sv.scrollHeight - sv.clientHeight <= THRESHOLD;
-      // 切页后要求用户先把滚动位置移出边缘区域（atBottom 和 atTop 都不成立），
-      // 才能再次触发切页。避免切到下一页后 scrollTop=0，用户继续滚动时
-      // 触发切回上一页，导致来回切换。
-      if (pagination.requireLeaveEdge && !contentShort) {
-        if (!atBottom && !atTop) {
-          pagination.requireLeaveEdge = false; // 已离开边缘，解除锁定
-        } else {
-          return; // 仍在边缘，忽略本次触发
-        }
+    const tp = totalPages();
+    if (label) {
+      if (total === 0) {
+        label.textContent = '共 0 段';
+      } else {
+        const start = (pagination.page - 1) * PAGE_SIZE + 1;
+        const end = Math.min(pagination.page * PAGE_SIZE, total);
+        label.textContent = `共 ${total} 段，正在显示 ${start}-${end} 段`;
       }
-      if (atBottom && pagination.page < totalPages()) {
-        pagination.requireLeaveEdge = true;
-        gotoPage(pagination.page + 1, { direction: 'next' });
-      } else if (atTop && pagination.page > 1) {
-        pagination.requireLeaveEdge = true;
-        gotoPage(pagination.page - 1, { direction: 'prev' });
-      }
-    }, 120);
-    sv.addEventListener('scroll', segViewScrollHandler, { passive: true });
+    }
+    // 翻页按钮禁用态
+    const prevBtn = Utils.$('.segment-toolbar .seg-prev');
+    const nextBtn = Utils.$('.segment-toolbar .seg-next');
+    if (prevBtn) prevBtn.disabled = pagination.page <= 1;
+    if (nextBtn) nextBtn.disabled = pagination.page >= tp;
   }
   // 切换到指定页
   function gotoPage(page, opts) {
     opts = opts || {};
     if (page < 1 || page > totalPages()) return;
     if (page === pagination.page && !opts.scrollToSegId) return;
-    pagination.scrollLock = true;
     const isPrev = page < pagination.page;
     pagination.page = page;
     renderSegView();
     updateSegCountLabel();
     requestAnimationFrame(() => {
       const sv = Utils.$('#segment-view');
-      if (!sv) { pagination.scrollLock = false; return; }
+      if (!sv) return;
       if (opts.scrollToSegId) {
         const cur = Utils.$(`#segment-view .seg-block[data-seg-id="${opts.scrollToSegId}"]`);
         if (cur) cur.scrollIntoView({ behavior: 'auto', block: 'center' });
@@ -134,8 +101,6 @@ window.NovelManager = (function () {
       } else {
         sv.scrollTop = 0;
       }
-      // 双重 raf 确保滚动位置稳定后再解锁
-      requestAnimationFrame(() => { pagination.scrollLock = false; });
     });
   }
   // 确保指定段在可见区域（播放器跳转时调用）
@@ -302,7 +267,6 @@ window.NovelManager = (function () {
       // 重置分页状态：打开新小说时回到第 1 页
       rebuildSegIndex();
       pagination.page = 1;
-      pagination.requireLeaveEdge = false;
       lastCurrentSegId = null;
       renderedSegIds.clear();
       renderDetail(novel);
@@ -356,7 +320,17 @@ window.NovelManager = (function () {
 
     // 分段工具条（.seg-count 文本由 updateSegCountLabel 填充）
     const toolbar = Utils.el('div', { class: 'segment-toolbar' }, [
-      Utils.el('span', {}, '段落列表（点击段落可跳转播放）'),
+      Utils.el('span', { class: 'seg-title' }, '段落列表（点击段落可跳转播放）'),
+      Utils.el('button', {
+        class: 'btn btn-secondary btn-sm seg-prev',
+        title: '上一页',
+        onclick: () => gotoPage(pagination.page - 1),
+      }, '上一页'),
+      Utils.el('button', {
+        class: 'btn btn-secondary btn-sm seg-next',
+        title: '下一页',
+        onclick: () => gotoPage(pagination.page + 1),
+      }, '下一页'),
       Utils.el('span', { class: 'seg-count' }, ''),
     ]);
 
@@ -380,10 +354,8 @@ window.NovelManager = (function () {
 
     // 渲染当前页段 block（分页加载，只渲染 100 条）
     renderSegView();
-    // 更新"共 X 段，正在显示 A-B 段"标签
+    // 更新"共 X 段，正在显示 A-B 段"标签 + 翻页按钮禁用态
     updateSegCountLabel();
-    // 绑定滚动监听（翻页触发）
-    bindSegViewScroll();
 
     // 绑定播放器事件
     bindPlayerEvents();

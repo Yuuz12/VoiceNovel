@@ -329,6 +329,16 @@
   flex-shrink: 0;
 }
 
+.segment-toolbar .seg-title {
+  color: var(--text-dim);
+}
+
+.segment-toolbar .seg-prev,
+.segment-toolbar .seg-next {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
 .segment-toolbar .seg-count {
   margin-left: auto;
   color: var(--text-mute);
