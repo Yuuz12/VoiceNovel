@@ -17,6 +17,7 @@ const novelsRoutes = require('./src/routes/novels');
 const charactersRoutes = require('./src/routes/characters');
 const ttsRoutes = require('./src/routes/tts');
 const cacheRoutes = require('./src/routes/cache');
+const exportRoutes = require('./src/routes/export');
 
 // WebSocket
 const { handlePlaybackConnection } = require('./src/ws/playbackSocket');
@@ -29,6 +30,7 @@ ensureDir(DATA_DIR);
 ensureDir(path.join(DATA_DIR, 'novels'));
 ensureDir(path.join(DATA_DIR, 'audio_cache'));
 ensureDir(path.join(DATA_DIR, 'voice_samples')); // MIMO 音色复刻样本
+ensureDir(path.join(DATA_DIR, 'exports')); // 有声书导出任务
 
 // 初始化默认设置
 settingsService.init();
@@ -47,6 +49,7 @@ app.use('/api/novels', novelsRoutes);
 app.use('/api/novels', charactersRoutes); // /api/novels/:id/characters/*
 app.use('/api/tts', ttsRoutes);
 app.use('/api/cache', cacheRoutes);
+app.use('/api/export', exportRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {

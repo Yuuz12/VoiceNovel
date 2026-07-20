@@ -383,6 +383,21 @@
           </div>
         </fieldset>
 
+        <fieldset class="settings-section">
+          <legend>有声书导出管理</legend>
+          <div class="form-row">
+            <label>所有导出任务（含成品 mp3 与分段产物）</label>
+            <span id="exports-size-text">-</span>
+          </div>
+          <div class="exports-manage-list" id="exports-manage-list">
+            <div class="exports-manage-empty">加载中...</div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-secondary" id="btn-refresh-exports">刷新</button>
+            <button class="btn btn-danger" id="btn-clear-exports">清空全部导出</button>
+          </div>
+        </fieldset>
+
         <div class="form-actions sticky-save">
           <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
           <span id="settings-save-result" class="result-hint"></span>

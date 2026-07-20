@@ -364,6 +364,19 @@ label {
   border: 1px solid transparent;
   background: var(--bg-elevated-2);
   color: var(--text);
+  text-decoration: none;
+}
+
+/* <a> 标签作为按钮使用时去除默认下划线（下载按钮等） */
+a.btn,
+a.btn:hover,
+a.btn:visited {
+  text-decoration: none;
+  color: inherit;
+}
+a.btn-primary,
+a.btn-primary:visited {
+  color: #fff;
 }
 
 .btn:hover {
@@ -731,3 +744,182 @@ label {
 /* LLM 流式 token：思考（灰色斜体）/ 输出（正常色） */
 .pm-log-line.reasoning { color: var(--text-mute); font-style: italic; }
 .pm-log-line.content { color: var(--text); }
+
+/* ===== 有声书导出模态框 ===== */
+.export-modal .modal-card,
+.export-progress-modal .modal-card,
+.export-list-modal .modal-card {
+  max-width: 90vw;
+}
+
+.export-novel-title {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.export-form .form-row select {
+  max-width: 100%;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.export-form .form-row-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-form .form-row-inline label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+}
+
+.export-form .form-row-inline input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.export-tip {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+/* 进度模态框内复用 .pm-* 样式 */
+.export-progress-modal .pm-log {
+  max-height: 260px;
+}
+
+/* 导出历史列表 */
+.export-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 12px 18px;
+}
+
+.export-list-empty {
+  text-align: center;
+  color: var(--text-mute);
+  padding: 32px 0;
+  font-size: 13px;
+}
+
+.export-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.export-list-item:last-child {
+  border-bottom: none;
+}
+
+.export-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.export-item-title {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+
+.export-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.export-item-meta .export-status {
+  font-weight: 500;
+}
+.export-item-meta .export-status.ok { color: var(--success); }
+.export-item-meta .export-status.err { color: var(--danger); }
+
+.export-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ===== 设置页 - 导出管理列表 ===== */
+.exports-manage-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  margin-bottom: 10px;
+}
+
+.exports-manage-empty {
+  text-align: center;
+  color: var(--text-mute);
+  padding: 20px 0;
+  font-size: 13px;
+}
+
+.exports-manage-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.exports-manage-item:last-child {
+  border-bottom: none;
+}
+
+.exports-manage-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.exports-manage-title {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+
+.exports-manage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.exports-manage-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}

@@ -142,5 +142,42 @@ window.API = (function () {
       streamPost('/novels/' + novelId + '/characters/extract', {}, { onEvent, signal }),
     streamAutoMatchVoices: (novelId, onEvent, signal) =>
       streamPost('/novels/' + novelId + '/characters/auto-match', {}, { onEvent, signal }),
+
+    // 有声书导出
+    createExportTask: (data) => request('POST', '/export', data),
+    listExportTasks: (novelId) => request('GET', '/export' + (novelId ? '?novelId=' + encodeURIComponent(novelId) : '')),
+    getExportTask: (taskId) => request('GET', '/export/' + taskId),
+    cancelExportTask: (taskId) => request('POST', '/export/' + taskId + '/cancel'),
+    deleteExportTask: (taskId) => request('DELETE', '/export/' + taskId),
+    getExportsSize: () => request('GET', '/export/size'),
+    clearAllExports: () => request('DELETE', '/export/all'),
+    exportDownloadUrl: (taskId) => base + '/export/' + taskId + '/download',
+    exportChaptersUrl: (taskId) => base + '/export/' + taskId + '/chapters',
+    exportLrcUrl: (taskId) => base + '/export/' + taskId + '/lrc',
+    // SSE 监听导出进度（用 EventSource，GET 请求）
+    // 返回 EventSource 实例，调用方可 es.close() 终止
+    // 注意：EventSource 在服务端关闭连接后会触发 onerror 并尝试自动重连，
+    //       调用方应在收到 done/error/canceled 事件后立即 es.close()，
+    //       并在 onerror 处理中判断是否已结束，避免误报"连接断开"。
+    streamExportProgress: (taskId, onEvent) => {
+      const es = new EventSource(base + '/export/' + taskId + '/stream');
+      const handlers = ['progress', 'done', 'error', 'canceled'];
+      handlers.forEach((evtName) => {
+        es.addEventListener(evtName, (e) => {
+          let data;
+          try { data = JSON.parse(e.data); } catch (_) { data = e.data; }
+          if (onEvent) onEvent({ event: evtName, data });
+        });
+      });
+      // onerror 不直接转发为 error 事件，避免与业务 error 事件混淆。
+      // 调用方在 done/error/canceled 后 es.close()，EventSource 不会再触发 onerror。
+      // 这里仅在连接异常断开（非主动关闭）时通知调用方。
+      es.onerror = () => {
+        // readyState=CLOSED 表示已主动 close，不通知
+        if (es.readyState === EventSource.CLOSED) return;
+        if (onEvent) onEvent({ event: 'connection-error', data: { message: '连接断开' } });
+      };
+      return es;
+    },
   };
 })();

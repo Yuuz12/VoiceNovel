@@ -314,6 +314,8 @@ window.NovelManager = (function () {
         Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => resegment('rule') }, '规则分段'),
         Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => resegment('llm') }, 'LLM 智能分段'),
         Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => clearExpressionTags(novel) }, '清除表现力标签'),
+        Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => openExportModal(novel) }, '导出有声书'),
+        Utils.el('button', { class: 'btn btn-secondary btn-sm', onclick: () => openExportListModal(novel) }, '导出历史'),
         Utils.el('button', { class: 'btn btn-danger btn-sm', onclick: () => deleteNovel(novel.id) }, '删除'),
       ]),
     ]);
@@ -1523,6 +1525,418 @@ window.NovelManager = (function () {
     } catch (err) {
       Utils.toast('清除失败: ' + err.message, 'error');
     }
+  }
+
+  // === 有声书导出 ===
+
+  /**
+   * 打开导出配置模态框，确认后创建任务并监听进度
+   */
+  async function openExportModal(novel) {
+    if (!novel) return;
+    const segs = (novel.segments || []).slice().sort((a, b) => a.order - b.order);
+    if (segs.length === 0) {
+      Utils.toast('当前小说没有段落，无法导出', 'error');
+      return;
+    }
+
+    // 构建段落下拉选项（前 60 字预览）
+    const segOptions = segs.map((s, i) => {
+      const preview = (s.text || '').slice(0, 60).replace(/\s+/g, ' ');
+      const typeLabel = s.type === 'dialog' ? '对话' : '旁白';
+      return { value: s.id, label: `#${i + 1} [${typeLabel}] ${preview}` };
+    });
+
+    let resolved = false;
+    const finish = (val) => {
+      if (resolved) return;
+      resolved = true;
+      mask.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+    };
+    let resolve;
+
+    // 表单控件
+    const startSelect = Utils.el('select', { class: 'form-input' },
+      segOptions.map((o) => Utils.el('option', { value: o.value }, o.label))
+    );
+    startSelect.value = segOptions[0].value;
+    const endSelect = Utils.el('select', { class: 'form-input' },
+      segOptions.map((o) => Utils.el('option', { value: o.value }, o.label))
+    );
+    endSelect.value = segOptions[segOptions.length - 1].value;
+    const narrationCheck = Utils.el('input', { type: 'checkbox', checked: 'checked' });
+    narrationCheck.checked = true;
+
+    const startBtn = Utils.el('button', { class: 'btn btn-primary' }, '开始导出');
+    const cancelBtn = Utils.el('button', { class: 'btn btn-secondary' }, '取消');
+
+    const form = Utils.el('div', { class: 'export-form' }, [
+      Utils.el('div', { class: 'form-row' }, [
+        Utils.el('label', {}, '起始段落'),
+        startSelect,
+      ]),
+      Utils.el('div', { class: 'form-row' }, [
+        Utils.el('label', {}, '结束段落'),
+        endSelect,
+      ]),
+      Utils.el('div', { class: 'form-row form-row-inline' }, [
+        Utils.el('label', {}, [
+          narrationCheck,
+          ' 包含旁白段落',
+        ]),
+      ]),
+      Utils.el('div', { class: 'export-tip' },
+        '提示：导出过程中已合成的段会走缓存秒级完成；未合成的段会调用 TTS 实时合成。任务在后台运行，可关闭弹窗后继续浏览。'
+      ),
+    ]);
+
+    const card = Utils.el('div', { class: 'modal-card', style: 'max-width: 560px;' }, [
+      Utils.el('div', { class: 'modal-head' }, [
+        Utils.el('h3', {}, '导出有声书'),
+        Utils.el('button', { class: 'btn btn-icon', onclick: () => finish(null) }, '×'),
+      ]),
+      Utils.el('div', { class: 'modal-body' }, [
+        Utils.el('div', { class: 'export-novel-title' }, `《${novel.title}》 · 共 ${segs.length} 段`),
+        form,
+      ]),
+      Utils.el('div', { class: 'modal-foot' }, [cancelBtn, startBtn]),
+    ]);
+
+    const mask = Utils.el('div', { class: 'modal export-modal' }, [card]);
+    mask.addEventListener('click', (e) => { if (e.target === mask) finish(null); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(mask);
+
+    return new Promise((res) => {
+      resolve = res;
+      startBtn.addEventListener('click', () => {
+        const startSegId = startSelect.value;
+        const endSegId = endSelect.value;
+        const includeNarration = narrationCheck.checked;
+        finish({ startSegId, endSegId, includeNarration });
+      });
+      cancelBtn.addEventListener('click', () => finish(null));
+    }).then((opts) => {
+      if (!opts) return null;
+      return startExport(novel, opts);
+    });
+  }
+
+  /**
+   * 创建导出任务并打开进度模态框监听
+   */
+  async function startExport(novel, opts) {
+    let task;
+    try {
+      const r = await API.createExportTask({
+        novelId: novel.id,
+        startSegId: opts.startSegId,
+        endSegId: opts.endSegId,
+        includeNarration: opts.includeNarration,
+      });
+      task = r;
+    } catch (err) {
+      Utils.toast('创建导出任务失败: ' + err.message, 'error');
+      return null;
+    }
+    openExportProgressModal(task.taskId, novel.title, task.total);
+    return task.taskId;
+  }
+
+  /**
+   * 打开进度+下载模态框
+   */
+  function openExportProgressModal(taskId, novelTitle, total) {
+    let mask, barFill, statusText, logEl, cancelBtn, closeBtn, downloadBtn, downloadChapBtn, downloadLrcBtn;
+    let finished = false;
+    let taskEnded = false; // 任务是否已结束（done/error/canceled），用于抑制 onerror 误报
+    let es = null;
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (es) es.close();
+      mask.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !isRunning()) { e.preventDefault(); finish(); }
+    };
+    const isRunning = () => cancelBtn && !cancelBtn.disabled;
+
+    const setProgress = (done, t) => {
+      const ratio = t > 0 ? done / t : 0;
+      barFill.style.width = (ratio * 100).toFixed(1) + '%';
+    };
+    const appendLog = (text, kind) => {
+      const line = Utils.el('div', { class: 'pm-log-line' + (kind ? ' ' + kind : '') }, text);
+      logEl.appendChild(line);
+      while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    // 构建模态框
+    barFill = Utils.el('div', { class: 'pm-fill' });
+    const bar = Utils.el('div', { class: 'pm-bar' }, [barFill]);
+    const barWrap = Utils.el('div', { class: 'pm-bar-wrap' }, [bar]);
+    statusText = Utils.el('div', { class: 'pm-status' }, '准备中...');
+    logEl = Utils.el('div', { class: 'pm-log' });
+    const body = Utils.el('div', { class: 'modal-body' }, [statusText, barWrap, logEl]);
+
+    closeBtn = Utils.el('button', { class: 'btn btn-icon', title: '关闭' }, '×');
+    const head = Utils.el('div', { class: 'modal-head' }, [
+      Utils.el('h3', {}, `导出有声书 · ${novelTitle}`),
+      closeBtn,
+    ]);
+
+    cancelBtn = Utils.el('button', { class: 'btn btn-danger' }, '取消任务');
+    downloadBtn = Utils.el('a', {
+      class: 'btn btn-primary',
+      style: 'display:none;',
+      download: '',
+      title: '下载完整 MP3',
+    }, '下载 MP3');
+    downloadChapBtn = Utils.el('a', {
+      class: 'btn btn-secondary',
+      style: 'display:none;',
+      download: '',
+      title: '下载章节信息（JSON）',
+    }, '下载章节');
+    downloadLrcBtn = Utils.el('a', {
+      class: 'btn btn-secondary',
+      style: 'display:none;',
+      download: '',
+      title: '下载 LRC 字幕',
+    }, '下载字幕');
+    const foot = Utils.el('div', { class: 'modal-foot' }, [cancelBtn, downloadLrcBtn, downloadChapBtn, downloadBtn]);
+
+    const card = Utils.el('div', { class: 'modal-card', style: 'max-width: 560px;' }, [head, body, foot]);
+    mask = Utils.el('div', { class: 'modal export-progress-modal' }, [card]);
+    document.body.appendChild(mask);
+    document.addEventListener('keydown', onKey);
+
+    setProgress(0, total || 1);
+
+    // 事件处理
+    const handleEvent = (evt) => {
+      const { event, data } = evt || {};
+      const d = data || {};
+      if (event === 'progress') {
+        if (d.type === 'snapshot') {
+          if (d.total) setProgress(d.done || 0, d.total);
+          statusText.textContent = `进度 ${d.done || 0} / ${d.total || total || 0}`;
+        } else if (d.type === 'progress' || d.type === 'segment-done') {
+          if (d.total) setProgress(d.done || 0, d.total);
+          if (d.type === 'segment-done') {
+            const cachedTag = d.cached ? ' [缓存]' : '';
+            appendLog(`${d.title || '段 ' + ((d.currentIdx || 0) + 1)} · ${Utils.formatBytes(d.size || 0)}${cachedTag}`, 'ok');
+          }
+          statusText.textContent = `正在合成：${d.done || 0} / ${d.total || total || 0}`;
+        } else if (d.type === 'skip') {
+          if (d.total) setProgress(d.done || 0, d.total);
+          appendLog(d.message || `段 ${(d.currentIdx || 0) + 1} 跳过`, 'warn');
+        } else if (d.type === 'error-segment') {
+          appendLog(d.message || `段 ${(d.currentIdx || 0) + 1} 失败`, 'error');
+        } else if (d.type === 'start') {
+          statusText.textContent = `开始导出，共 ${d.total || total || 0} 段`;
+          appendLog(`任务已启动（taskId: ${d.taskId || taskId}）`, 'info');
+        } else if (d.type === 'merging') {
+          statusText.textContent = '合成完成，正在拼接 mp3...';
+          setProgress(d.total || total || 1, d.total || total || 1);
+          appendLog('所有段合成完成，正在拼接为完整 mp3...', 'info');
+        }
+      } else if (event === 'done') {
+        statusText.textContent = `导出完成 · ${Utils.formatBytes(d.outputSize || 0)}`;
+        statusText.className = 'pm-status ok';
+        setProgress(d.total || total || 1, d.total || total || 1);
+        appendLog(`导出完成，共 ${d.chapterCount || 0} 段，大小 ${Utils.formatBytes(d.outputSize || 0)}`, 'ok');
+        // 显示下载按钮
+        downloadBtn.href = API.exportDownloadUrl(taskId);
+        downloadBtn.style.display = '';
+        downloadChapBtn.href = API.exportChaptersUrl(taskId);
+        downloadChapBtn.style.display = '';
+        downloadLrcBtn.href = API.exportLrcUrl(taskId);
+        downloadLrcBtn.style.display = '';
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '已完成';
+        cancelBtn.className = 'btn btn-primary';
+        // 主动关闭 SSE，避免服务端 res.end() 触发 onerror 误报"连接断开"
+        taskEnded = true;
+        if (es) es.close();
+      } else if (event === 'error') {
+        // 已是 ended 状态的 onerror 噪音忽略
+        if (taskEnded) return;
+        statusText.textContent = '失败：' + (d.message || '未知错误');
+        statusText.className = 'pm-status err';
+        appendLog(d.message || '未知错误', 'error');
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '关闭';
+        cancelBtn.className = 'btn btn-secondary';
+        taskEnded = true;
+        if (es) es.close();
+      } else if (event === 'canceled') {
+        statusText.textContent = '已取消';
+        statusText.className = 'pm-status cancelled';
+        appendLog('任务已取消', 'cancel');
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '关闭';
+        cancelBtn.className = 'btn btn-secondary';
+        taskEnded = true;
+        if (es) es.close();
+      } else if (event === 'connection-error') {
+        // 任务已结束（done/error/canceled）后的连接断开是正常现象，忽略
+        if (taskEnded) return;
+        // 任务运行中连接断开：提示但不终止任务（后端任务仍在运行）
+        appendLog('SSE 连接断开，任务仍在后台运行，可重新打开进度窗口查看', 'warn');
+      }
+    };
+
+    // 开始监听 SSE
+    es = API.streamExportProgress(taskId, handleEvent);
+
+    // 按钮事件
+    closeBtn.addEventListener('click', () => {
+      if (isRunning()) {
+        if (confirm('任务正在运行，关闭窗口不会取消任务，可稍后在导出列表查看。确定关闭？')) {
+          finish();
+        }
+      } else {
+        finish();
+      }
+    });
+    mask.addEventListener('click', (e) => {
+      if (e.target === mask && !isRunning()) finish();
+    });
+    cancelBtn.addEventListener('click', async () => {
+      if (cancelBtn.disabled) { finish(); return; }
+      if (!await Utils.confirmDialog({
+        title: '取消导出',
+        message: '取消任务？已合成的段会保留在缓存中，下次导出可断点续传。',
+        confirmText: '取消任务',
+        danger: true,
+      })) return;
+      try {
+        await API.cancelExportTask(taskId);
+      } catch (err) {
+        Utils.toast('取消失败: ' + err.message, 'error');
+      }
+    });
+  }
+
+  /**
+   * 打开导出历史列表（查看 / 下载 / 删除）
+   */
+  async function openExportListModal(novel) {
+    let tasks = [];
+    try {
+      const r = await API.listExportTasks(novel ? novel.id : null);
+      tasks = r.tasks || [];
+    } catch (err) {
+      Utils.toast('加载导出列表失败: ' + err.message, 'error');
+      return;
+    }
+
+    let mask;
+    let resolved = false;
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      mask.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); finish(); } };
+
+    const listEl = Utils.el('div', { class: 'export-list' });
+    const renderList = () => {
+      listEl.innerHTML = '';
+      if (tasks.length === 0) {
+        listEl.appendChild(Utils.el('div', { class: 'export-list-empty' }, '暂无导出任务'));
+        return;
+      }
+      tasks.forEach((t) => {
+        const statusLabel = {
+          pending: '待开始', running: '运行中', done: '已完成',
+          error: '失败', canceled: '已取消',
+        }[t.status] || t.status;
+        const statusClass = t.status === 'done' ? 'ok' : (t.status === 'error' || t.status === 'canceled' ? 'err' : '');
+        const item = Utils.el('div', { class: 'export-list-item' }, [
+          Utils.el('div', { class: 'export-item-main' }, [
+            Utils.el('div', { class: 'export-item-title' }, t.novelTitle || t.novelId),
+            Utils.el('div', { class: 'export-item-meta' }, [
+              Utils.el('span', { class: 'export-status ' + statusClass }, statusLabel),
+              Utils.el('span', {}, `${t.done || 0} / ${t.total || 0} 段`),
+              t.outputSize ? Utils.el('span', {}, Utils.formatBytes(t.outputSize)) : null,
+              Utils.el('span', {}, new Date(t.createdAt).toLocaleString()),
+            ].filter(Boolean)),
+          ]),
+          Utils.el('div', { class: 'export-item-actions' }, [
+            t.status === 'done' ? Utils.el('a', {
+              class: 'btn btn-primary btn-sm',
+              href: API.exportDownloadUrl(t.id),
+              download: '',
+              title: '下载完整 MP3',
+            }, '下载 MP3') : null,
+            t.status === 'done' ? Utils.el('a', {
+              class: 'btn btn-secondary btn-sm',
+              href: API.exportChaptersUrl(t.id),
+              download: '',
+              title: '下载章节信息（JSON）',
+            }, '下载章节') : null,
+            t.status === 'done' ? Utils.el('a', {
+              class: 'btn btn-secondary btn-sm',
+              href: API.exportLrcUrl(t.id),
+              download: '',
+              title: '下载 LRC 字幕',
+            }, '下载字幕') : null,
+            Utils.el('button', {
+              class: 'btn btn-danger btn-sm',
+              onclick: async () => {
+                if (!await Utils.confirmDialog({
+                  title: '删除任务', message: '删除此导出任务及其文件？',
+                  confirmText: '删除', danger: true,
+                })) return;
+                try {
+                  await API.deleteExportTask(t.id);
+                  tasks = tasks.filter((x) => x.id !== t.id);
+                  renderList();
+                } catch (err) {
+                  Utils.toast('删除失败: ' + err.message, 'error');
+                }
+              },
+            }, '删除'),
+          ].filter(Boolean)),
+        ]);
+        listEl.appendChild(item);
+      });
+    };
+    renderList();
+
+    const closeBtn = Utils.el('button', { class: 'btn btn-icon' }, '×');
+    const head = Utils.el('div', { class: 'modal-head' }, [
+      Utils.el('h3', {}, '导出历史'),
+      closeBtn,
+    ]);
+    const refreshBtn = Utils.el('button', { class: 'btn btn-secondary' }, '刷新');
+    const foot = Utils.el('div', { class: 'modal-foot' }, [refreshBtn]);
+    const card = Utils.el('div', { class: 'modal-card', style: 'max-width: 640px;' }, [head, listEl, foot]);
+    mask = Utils.el('div', { class: 'modal export-list-modal' }, [card]);
+    mask.addEventListener('click', (e) => { if (e.target === mask) finish(); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(mask);
+
+    closeBtn.addEventListener('click', finish);
+    refreshBtn.addEventListener('click', async () => {
+      try {
+        const r = await API.listExportTasks(novel ? novel.id : null);
+        tasks = r.tasks || [];
+        renderList();
+      } catch (_) {}
+    });
   }
 
   function getCurrentNovel() {

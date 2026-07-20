@@ -63,6 +63,7 @@ window.SettingsPanel = (function () {
     bindEvents();
     await load();
     await refreshCache();
+    await refreshExports();
   }
 
   async function loadVoices(provider) {
@@ -82,6 +83,8 @@ window.SettingsPanel = (function () {
     Utils.$('#btn-preview-narration').addEventListener('click', previewNarration);
     Utils.$('#btn-refresh-cache').addEventListener('click', refreshCache);
     Utils.$('#btn-clear-cache').addEventListener('click', clearCache);
+    Utils.$('#btn-refresh-exports').addEventListener('click', refreshExports);
+    Utils.$('#btn-clear-exports').addEventListener('click', clearAllExports);
     Utils.$('#btn-add-symbol').addEventListener('click', () => addSymbolRow('', ''));
 
     // provider 切换
@@ -669,7 +672,7 @@ window.SettingsPanel = (function () {
   async function clearCache() {
     if (!await Utils.confirmDialog({
       title: '清空音频缓存',
-      message: '确定清空所有音频缓存？下次播放将重新调用 TTS。',
+      message: '确定清空所有音频缓存？下次播放将重新调用 TTS。\n注意：导出的有声书文件不会受影响。',
       confirmText: '清空',
       danger: true,
     })) return;
@@ -677,6 +680,109 @@ window.SettingsPanel = (function () {
       const r = await API.clearCache();
       Utils.toast(`已清空 ${r.removed} 个缓存文件`, 'success');
       await refreshCache();
+    } catch (err) {
+      Utils.toast('清空失败: ' + err.message, 'error');
+    }
+  }
+
+  // === 导出管理 ===
+
+  async function refreshExports() {
+    // 刷新总大小
+    try {
+      const size = await API.getExportsSize();
+      Utils.$('#exports-size-text').textContent =
+        `${Utils.formatBytes(size.bytes)} · ${size.taskCount} 个任务 · ${size.count} 个文件`;
+    } catch (err) {
+      Utils.$('#exports-size-text').textContent = '查询失败';
+    }
+    // 刷新任务列表
+    try {
+      const r = await API.listExportTasks();
+      renderExportsList(r.tasks || []);
+    } catch (err) {
+      const list = Utils.$('#exports-manage-list');
+      if (list) list.innerHTML = '<div class="exports-manage-empty">加载失败: ' + Utils.escapeHtml(err.message) + '</div>';
+    }
+  }
+
+  function renderExportsList(tasks) {
+    const list = Utils.$('#exports-manage-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!tasks || tasks.length === 0) {
+      list.innerHTML = '<div class="exports-manage-empty">暂无导出任务</div>';
+      return;
+    }
+    tasks.forEach((t) => {
+      const statusLabel = {
+        pending: '待开始', running: '运行中', done: '已完成',
+        error: '失败', canceled: '已取消',
+      }[t.status] || t.status;
+      const statusClass = t.status === 'done' ? 'ok' : (t.status === 'error' || t.status === 'canceled' ? 'err' : '');
+      const item = Utils.el('div', { class: 'exports-manage-item' }, [
+        Utils.el('div', { class: 'exports-manage-main' }, [
+          Utils.el('div', { class: 'exports-manage-title' }, t.novelTitle || t.novelId),
+          Utils.el('div', { class: 'exports-manage-meta' }, [
+            Utils.el('span', { class: 'export-status ' + statusClass }, statusLabel),
+            Utils.el('span', {}, `${t.done || 0} / ${t.total || 0} 段`),
+            t.outputSize ? Utils.el('span', {}, Utils.formatBytes(t.outputSize)) : null,
+            Utils.el('span', {}, new Date(t.createdAt).toLocaleString()),
+          ].filter(Boolean)),
+        ]),
+        Utils.el('div', { class: 'exports-manage-actions' }, [
+          t.status === 'done' ? Utils.el('a', {
+            class: 'btn btn-primary btn-sm',
+            href: API.exportDownloadUrl(t.id),
+            download: '',
+            title: '下载完整 MP3',
+          }, '下载 MP3') : null,
+          t.status === 'done' ? Utils.el('a', {
+            class: 'btn btn-secondary btn-sm',
+            href: API.exportChaptersUrl(t.id),
+            download: '',
+            title: '下载章节信息（JSON）',
+          }, '下载章节') : null,
+          t.status === 'done' ? Utils.el('a', {
+            class: 'btn btn-secondary btn-sm',
+            href: API.exportLrcUrl(t.id),
+            download: '',
+            title: '下载 LRC 字幕',
+          }, '下载字幕') : null,
+          Utils.el('button', {
+            class: 'btn btn-danger btn-sm',
+            onclick: async () => {
+              if (!await Utils.confirmDialog({
+                title: '删除导出任务',
+                message: '删除此任务及其所有文件？',
+                confirmText: '删除', danger: true,
+              })) return;
+              try {
+                await API.deleteExportTask(t.id);
+                Utils.toast('已删除', 'success');
+                await refreshExports();
+              } catch (err) {
+                Utils.toast('删除失败: ' + err.message, 'error');
+              }
+            },
+          }, '删除'),
+        ].filter(Boolean)),
+      ]);
+      list.appendChild(item);
+    });
+  }
+
+  async function clearAllExports() {
+    if (!await Utils.confirmDialog({
+      title: '清空全部导出',
+      message: '确定删除所有导出任务及其文件？\n注意：音频缓存不受影响，下次播放仍可命中缓存。',
+      confirmText: '清空全部',
+      danger: true,
+    })) return;
+    try {
+      const r = await API.clearAllExports();
+      Utils.toast(`已清空 ${r.removed} 个导出任务`, 'success');
+      await refreshExports();
     } catch (err) {
       Utils.toast('清空失败: ' + err.message, 'error');
     }
