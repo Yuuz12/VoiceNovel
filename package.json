@@ -1,8 +1,8 @@
 {
   "name": "voice-novel",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
-  "description": "小说语音播放应用 — 基于方舟 Agent Plan TTS 与 LLM 实现多人有声书",
+  "description": "小说语音播放应用 — 基于 TTS 与 LLM 实现多人有声书",
   "main": "server.js",
   "type": "commonjs",
   "engines": {

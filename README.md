@@ -1,4 +1,4 @@
-# 语音小说 · VoiceNovel v1.0.1
+# 语音小说 · VoiceNovel v1.0.2
 
 基于多 provider TTS（火山方舟 / 小米 MIMO / OpenAI / MiniMax / 阿里云百炼）与 LLM 的小说语音播放应用。
 让小说中不同角色拥有不同音色，实现"多人有声书"体验。TTS 服务可自由切换，配置独立保存。
@@ -10,7 +10,9 @@
 - **多音色库**：5 套 TTS 服务音色目录，150+ 预制音色，按 provider 分组展示
 - **音色匹配**：LLM 根据角色性格一键推荐匹配音色
 - **流式播放**：HTTP TTS + WebSocket 透传，按段自动连播
-- **音频缓存**：已合成段落落盘，重复播放秒播、节省 API 费用
+- **有声书导出**：一键导出整本小说为 MP3 + LRC 字幕 + 章节信息（JSON/CUE），后台合成、断点续传、缓存复用
+- **音频缓存**：已合成段落落盘，重复播放秒播、节省 API 费用；缓存与导出完全隔离，互不干扰
+- **导出管理**：列出/下载/删除历史导出任务，分别管理音频缓存与导出文件占用的磁盘空间
 - **可配置**：TTS provider + LLM + 旁白音色（按 provider 独立保存）/ 对话符号 / 段落间隔
 - **音频标签**：`[高兴]`、`[悲伤]` 等方括号标注自动映射为对应 provider 的情感/emotion 指令
 
@@ -77,7 +79,7 @@ npm run dev
 填入 OpenAI 兼容服务的 Base URL / API Key / Model
 - 例如 OpenAI 官方：`https://api.openai.com/v1` + `gpt-4o-mini`
 - 或 DeepSeek、智谱、月之暗面等兼容服务
-- 推荐使用速度块的模型，如 `deepseek-v4-flash`
+- 推荐使用速度快的模型，如 `deepseek-v4-flash`
 
 #### 3.3 旁白音色
 
@@ -99,12 +101,24 @@ npm run dev
 
 1. 回到 **小说库**，点击 **+ 新建**
 2. 输入标题，粘贴小说正文（或上传 .txt），点 **创建**
-3. 点击一键提取匹配，完成后再点LLM智能分段
+3. 点击一键提取匹配，完成后再点 LLM 智能分段
 4. 排查对话绑定角色识别结果，确认是否符合预期
 5. （可选）在段落中插入情感标签，如「[高兴]今天天气真好。」→ 合成时自动带上对应情感
 6. 也可手动为每个角色选择音色、调整语速/音量、试听
 7. 点击播放器 播放 按钮开始播放，自动按段连播，对话用角色音色、旁白用旁白音色
 8. 点击任意段落可跳转播放；播放进度实时显示
+
+### 5. 导出有声书
+
+1. 在小说详情页顶部操作栏，点击 **导出有声书**
+2. 在弹窗中选择起止段落、是否包含旁白，点击 **开始导出**
+3. 后台合成所有段落（已缓存的秒级完成，未缓存的走 TTS 实时合成），实时显示进度日志
+4. 导出完成后，可直接下载：
+   - **MP3**：完整拼接的有声书
+   - **LRC**：标准 LRC 字幕文件（按句切分，自动剔除 `[高兴]` 等音频标签，支持播放器歌词同步）
+   - **章节**：JSON 章节信息（含每段字节偏移、时长、标题）
+5. 关闭窗口后任务仍在后台运行，可在 **导出历史** 中查看/继续下载
+6. 在 **设置** 页的「有声书导出管理」可统一管理所有导出任务占用的磁盘空间
 
 ## 目录结构
 
@@ -122,8 +136,10 @@ VoiceNovel/
 │   │   ├── novelService.js    # 小说 CRUD + 规则分段
 │   │   ├── characterService.js# 音色自动匹配
 │   │   ├── settingsService.js # 设置持久化 + 旧结构迁移
-│   │   └── audioCacheService.js
+│   │   ├── audioCacheService.js
+│   │   └── exportService.js   # 有声书导出：任务管理 + 合成 + 拼接 + LRC 字幕
 │   ├── routes/                # REST 路由
+│   │   └── export.js          # 导出路由：创建/列表/进度/SSE/下载/删除
 │   ├── ws/playbackSocket.js   # WebSocket 播放透传
 │   ├── storage/fileStorage.js # JSON 原子读写
 │   └── utils/                 # logger / id
@@ -131,11 +147,19 @@ VoiceNovel/
 │   ├── index.html
 │   ├── styles/
 │   └── scripts/
+│       └── novelManager.js    # 含导出配置/进度/历史模态框
 └── data/                      # 运行时数据（自动创建，gitignore）
     ├── novels/                # 每本小说一个 JSON
     ├── settings.json
-    ├── audio_cache/           # sha256 命名的 mp3
+    ├── audio_cache/           # sha256 命名的 mp3（TTS 播放缓存）
     ├── voice_samples/         # voiceclone 模式上传的样本
+    ├── exports/               # 有声书导出任务
+    │   └── {taskId}/
+    │       ├── output.mp3     # 拼接完成的完整 mp3
+    │       ├── output.lrc     # LRC 字幕
+    │       ├── output.cue     # CUE 章节文件
+    │       ├── chapters.json  # 章节信息（含时长）
+    │       └── parts/         # 分段 mp3（00000.mp3, 00001.mp3, ...）
     └── logs/app.log
 ```
 
@@ -151,7 +175,7 @@ VoiceNovel/
 | POST | `/api/tts/voice-sample` | 上传 voiceclone 复刻样本（base64） |
 | GET | `/api/tts/voice-samples` | 列出已上传复刻样本 |
 | DELETE | `/api/tts/voice-sample?path=` | 删除复刻样本 |
-| GET/DELETE | `/api/cache` | 缓存大小 / 清空 |
+| GET/DELETE | `/api/cache` | 音频缓存大小 / 清空（仅清播放缓存，不动导出文件） |
 | GET/POST | `/api/novels` | 列出 / 创建小说 |
 | GET/PUT/DELETE | `/api/novels/:id` | 详情 / 更新 / 删除 |
 | POST | `/api/novels/:id/segment` | 规则重新分段 |
@@ -160,10 +184,65 @@ VoiceNovel/
 | PUT | `/api/novels/:id/characters/:cid` | 更新角色音色/参数 |
 | POST | `/api/novels/:id/characters/extract` | LLM 提取角色 |
 | POST | `/api/novels/:id/characters/auto-match` | LLM 自动匹配音色 |
+| POST | `/api/export` | 创建导出任务（后台运行） |
+| GET | `/api/export` | 列出所有导出任务（?novelId= 过滤） |
+| GET | `/api/export/size` | 所有导出任务占用磁盘大小 |
+| GET | `/api/export/:taskId` | 查询任务状态 |
+| GET | `/api/export/:taskId/stream` | SSE 推送导出进度 |
+| POST | `/api/export/:taskId/cancel` | 取消运行中的任务 |
+| DELETE | `/api/export/:taskId` | 删除任务及文件 |
+| DELETE | `/api/export/all` | 清空所有导出任务 |
+| GET | `/api/export/:taskId/download` | 下载成品 mp3 |
+| GET | `/api/export/:taskId/chapters` | 下载章节信息 JSON |
+| GET | `/api/export/:taskId/lrc` | 下载 LRC 字幕 |
 
 WebSocket：`ws://localhost:3000/ws/playback`
 - 客户端 → `{type:"play", novelId, segmentId}` / `{type:"stop"}`
 - 服务端 → `{type:"meta"}` / `{type:"audio", data:"<base64>"}` / `{type:"end"}` / `{type:"error"}`
+
+## 有声书导出说明
+
+### 导出流程
+
+1. `POST /api/export` 创建任务（按 novelId + 可选的起止段落/旁白过滤），任务清单落盘到 `data/exports/{taskId}.json`
+2. 后台 `runTask` 串行处理所有段落：
+   - 复用 `audioCache` 走缓存：已合成的段秒级拷贝到 `parts/{idx}.mp3`
+   - 未命中时调 `ttsService.synthesize` 合成并写回缓存
+   - 解析 MP3 帧头 bitrate 计算精确时长（支持 MPEG1/MPEG2/MPEG2.5 Layer3，跳过 ID3v2 头）
+3. 全部完成 → 拼接为 `output.mp3`
+4. 生成 `output.lrc`（按句切分 / 字数比例分配时间 / 去音频标签）+ `output.cue`（CD 章节格式）+ `chapters.json`
+5. 任务标记 `done`，SSE 推送 `done` 事件后主动关闭连接
+
+### 断点续传
+
+- 任务清单每隔一段就落盘一次，中断后重跑自动跳过 status=done 的段
+- 导出缓存与播放缓存共享，多次导出相同范围会命中缓存秒级完成
+
+### 存储隔离
+
+| 目录 | 作用 | 清理方式 |
+|---|---|---|
+| `data/audio_cache/` | TTS 播放缓存（sha256 命名） | 设置页「清空缓存」 |
+| `data/exports/{taskId}/` | 导出任务（mp3/lrc/cue/chapters/parts） | 设置页「清空全部导出」或任务级删除 |
+
+**关键设计**：`DELETE /api/cache` 只清 `audio_cache`，不会删 `exports`；反之亦然。缓存命中是导出加速的核心——首次导出走 TTS，第二次同范围导出走缓存秒级完成。
+
+### LRC 字幕格式
+
+```
+[ti:小说标题]
+[al:有声书]
+[by:VoiceNovel]
+[length:总时长]
+
+[00:00.00]第一句歌词。
+[00:02.50]第二句歌词。
+...
+```
+
+- 按中英文句末标点（。！？!?…）切分句子
+- 按字数比例在段时长内分配时间戳
+- 自动剔除方括号音频标签（`[高兴]` → 不在 LRC 中显示）
 
 ## 角色音色自动匹配算法
 
@@ -243,7 +322,9 @@ OpenAI 兼容 chat/completions（非流式）：
 - **播放无声**：浏览器可能拦截自动播放，需先点击页面任意位置触发交互
 - **TTS 返回错误码**：查看 `data/logs/app.log`，火山方舟看 `x-tt-logid`，其他看 `<provider>` 日志行
 - **切换 provider 后音色丢失**：各家音色独立，需在设置页为当前 provider 重新选择或 LLM 匹配
-- **缓存越来越大**：设置页底部可查看大小并清空
+- **导出进度停滞**：刷新任务状态，已完成的段会跳过；可在导出历史中查看失败段的错误信息
+- **导出文件体积过大**：在设置页查看"导出管理"可单独清理历史导出任务（不影响播放缓存）
+- **缓存越来越大**：设置页"音频缓存"区可查看大小并清空，不影响已导出的有声书
 
 ## 许可
 
